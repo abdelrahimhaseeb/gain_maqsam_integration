@@ -1,0 +1,23 @@
+{
+ "background_color": "",
+ "color": "#2563EB",
+ "creation": "2026-04-25 00:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Number Card",
+ "document_type": "Maqsam Call Log",
+ "filters_json": "[[\"Maqsam Call Log\",\"timestamp\",\"Timespan\",\"today\"]]",
+ "function": "Count",
+ "idx": 0,
+ "is_public": 1,
+ "is_standard": 1,
+ "label": "Total Calls Today",
+ "modified": "2026-04-25 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Gain Maqsam Integration",
+ "name": "Total Calls Today",
+ "owner": "Administrator",
+ "show_full_number": 0,
+ "show_percentage_stats": 1,
+ "stats_time_interval": "Daily",
+ "type": "Document Type"
+}

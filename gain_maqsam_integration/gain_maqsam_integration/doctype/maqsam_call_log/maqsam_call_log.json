@@ -1,0 +1,312 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "autoname": "naming_series:",
+ "creation": "2026-04-25 00:00:00.000000",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "engine": "InnoDB",
+ "field_order": [
+  "call_view_tab",
+  "call_view_html",
+  "details_tab",
+  "naming_series",
+  "source",
+  "state",
+  "outcome",
+  "direction",
+  "call_type",
+  "column_break_call_state",
+  "maqsam_call_id",
+  "timestamp",
+  "duration",
+  "party_section",
+  "agent_email",
+  "agent_name",
+  "column_break_party",
+  "caller_number",
+  "callee_number",
+  "normalized_phone",
+  "link_section",
+  "linked_doctype",
+  "linked_docname",
+  "column_break_link",
+  "linked_title",
+  "follow_up_section",
+  "follow_up_required",
+  "follow_up_date",
+  "notes",
+  "recording_section",
+  "recording_file",
+  "recording_fetched_at",
+  "column_break_recording",
+  "recording_file_size",
+  "recording_content_type",
+  "payload_view_tab",
+  "payload_view_html",
+  "raw_payload_tab",
+  "raw_payload_section",
+  "raw_payload"
+ ],
+ "fields": [
+  {
+   "fieldname": "call_view_tab",
+   "fieldtype": "Tab Break",
+   "label": "Call View"
+  },
+  {
+   "fieldname": "call_view_html",
+   "fieldtype": "HTML",
+   "label": "Call View"
+  },
+  {
+   "fieldname": "details_tab",
+   "fieldtype": "Tab Break",
+   "label": "Details"
+  },
+  {
+   "default": "MCL-.#####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Naming Series",
+   "options": "MCL-.#####",
+   "reqd": 1
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Source",
+   "options": "\nGain Click-to-Call\nMaqsam Sync"
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "State"
+  },
+  {
+   "fieldname": "outcome",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Outcome",
+   "options": "\nAnswered\nNo Answer\nBusy\nWrong Number\nFollow Up\nOther"
+  },
+  {
+   "fieldname": "direction",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Direction",
+   "options": "\noutbound\ninbound\ninternal\nunknown"
+  },
+  {
+   "fieldname": "call_type",
+   "fieldtype": "Data",
+   "label": "Call Type"
+  },
+  {
+   "fieldname": "column_break_call_state",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "maqsam_call_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Maqsam Call ID",
+   "search_index": 1
+  },
+  {
+   "fieldname": "timestamp",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Call Timestamp"
+  },
+  {
+   "default": "0",
+   "fieldname": "duration",
+   "fieldtype": "Int",
+   "label": "Duration Seconds"
+  },
+  {
+   "fieldname": "party_section",
+   "fieldtype": "Section Break",
+   "label": "Parties"
+  },
+  {
+   "fieldname": "agent_email",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Agent Email"
+  },
+  {
+   "fieldname": "agent_name",
+   "fieldtype": "Data",
+   "label": "Agent Name"
+  },
+  {
+   "fieldname": "column_break_party",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "caller_number",
+   "fieldtype": "Data",
+   "label": "Caller Number"
+  },
+  {
+   "fieldname": "callee_number",
+   "fieldtype": "Data",
+   "label": "Callee Number"
+  },
+  {
+   "fieldname": "normalized_phone",
+   "fieldtype": "Data",
+   "label": "Normalized Phone"
+  },
+  {
+   "fieldname": "link_section",
+   "fieldtype": "Section Break",
+   "label": "Linked Record"
+  },
+  {
+   "fieldname": "linked_doctype",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Linked DocType",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "linked_docname",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Linked Document",
+   "options": "linked_doctype"
+  },
+  {
+   "fieldname": "column_break_link",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "linked_title",
+   "fieldtype": "Data",
+   "label": "Linked Title"
+  },
+  {
+   "fieldname": "follow_up_section",
+   "fieldtype": "Section Break",
+   "label": "Follow-up"
+  },
+  {
+   "default": "0",
+   "fieldname": "follow_up_required",
+   "fieldtype": "Check",
+   "label": "Follow-up Required"
+  },
+  {
+   "depends_on": "eval:doc.follow_up_required",
+   "fieldname": "follow_up_date",
+   "fieldtype": "Date",
+   "label": "Follow-up Date"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "recording_section",
+   "fieldtype": "Section Break",
+   "label": "Recording"
+  },
+  {
+   "fieldname": "recording_file",
+   "fieldtype": "Attach",
+   "label": "Call Recording File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recording_fetched_at",
+   "fieldtype": "Datetime",
+   "label": "Recording Saved At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_recording",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "recording_file_size",
+   "fieldtype": "Int",
+   "label": "Recording File Size",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recording_content_type",
+   "fieldtype": "Data",
+   "label": "Recording Content Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payload_view_tab",
+   "fieldtype": "Tab Break",
+   "label": "Payload View"
+  },
+  {
+   "fieldname": "payload_view_html",
+   "fieldtype": "HTML",
+   "label": "Payload View"
+  },
+  {
+   "fieldname": "raw_payload_tab",
+   "fieldtype": "Tab Break",
+   "label": "Raw Payload"
+  },
+  {
+   "fieldname": "raw_payload_section",
+   "fieldtype": "Section Break",
+   "label": "Raw Payload"
+  },
+  {
+   "fieldname": "raw_payload",
+   "fieldtype": "Code",
+   "label": "Raw Payload",
+   "options": "JSON"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-04-25 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Gain Maqsam Integration",
+ "name": "Maqsam Call Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Desk User",
+   "write": 1
+  }
+ ],
+ "search_fields": "maqsam_call_id,agent_email,caller_number,callee_number,linked_title,linked_docname",
+ "sort_field": "timestamp",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "linked_title",
+ "track_changes": 1
+}

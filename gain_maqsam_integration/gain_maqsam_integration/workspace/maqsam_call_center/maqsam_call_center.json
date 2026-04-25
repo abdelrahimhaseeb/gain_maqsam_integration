@@ -1,0 +1,213 @@
+{
+ "app": "gain_maqsam_integration",
+ "charts": [
+  {
+   "chart_name": "Maqsam Calls Daily",
+   "label": "Maqsam Calls Daily"
+  }
+ ],
+ "content": "[{\"id\":\"maqsam_calls_chart\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Maqsam Calls Daily\",\"col\":12}},{\"id\":\"total_calls_today_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Total Calls Today\",\"col\":3}},{\"id\":\"outbound_today_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Outbound Today\",\"col\":3}},{\"id\":\"missed_no_answer_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Missed / No Answer\",\"col\":3}},{\"id\":\"follow_ups_due_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Follow-ups Due\",\"col\":3}},{\"id\":\"caller_profile_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Caller Profile\",\"col\":3}},{\"id\":\"maqsam_settings_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maqsam Settings\",\"col\":3}},{\"id\":\"maqsam_call_log_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maqsam Call Log\",\"col\":3}},{\"id\":\"patient_appointment_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Patient Appointment\",\"col\":3}},{\"id\":\"patient_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Patient\",\"col\":3}},{\"id\":\"customer_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Customer\",\"col\":3}},{\"id\":\"workspace_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"call_center_paragraph\",\"type\":\"paragraph\",\"data\":{\"text\":\"Call Center\",\"col\":12}},{\"id\":\"maqsam_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Maqsam\",\"col\":4}},{\"id\":\"sales_contacts_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Sales Contacts\",\"col\":4}},{\"id\":\"healthcare_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Healthcare\",\"col\":4}}]",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "icon": "phone-call",
+ "idx": 0,
+ "indicator_color": "green",
+ "is_hidden": 0,
+ "label": "Maqsam Call Center",
+ "links": [
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maqsam",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+  "label": "Caller Profile",
+   "link_count": 0,
+   "link_to": "maqsam-caller-profile",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maqsam Settings",
+   "link_count": 0,
+   "link_to": "Maqsam Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maqsam Call Log",
+   "link_count": 0,
+   "link_to": "Maqsam Call Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sales Contacts",
+   "link_count": 3,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Lead",
+   "link_count": 0,
+   "link_to": "Lead",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Customer",
+   "link_count": 0,
+   "link_to": "Customer",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Contact",
+   "link_count": 0,
+   "link_to": "Contact",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Healthcare",
+   "link_count": 2,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Patient",
+   "link_count": 0,
+   "link_to": "Patient",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Patient Appointment",
+   "link_count": 0,
+   "link_to": "Patient Appointment",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  }
+ ],
+ "module": "Gain Maqsam Integration",
+ "name": "Maqsam Call Center",
+ "number_cards": [
+  {
+   "label": "Total Calls Today",
+   "number_card_name": "Total Calls Today"
+  },
+  {
+   "label": "Outbound Today",
+   "number_card_name": "Outbound Today"
+  },
+  {
+   "label": "Missed / No Answer",
+   "number_card_name": "Missed / No Answer"
+  },
+  {
+   "label": "Follow-ups Due",
+   "number_card_name": "Follow-ups Due"
+  }
+ ],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "restrict_to_domain": "",
+ "roles": [],
+ "sequence_id": 30.0,
+ "shortcuts": [
+  {
+   "color": "Purple",
+   "doc_view": "",
+  "label": "Caller Profile",
+   "link_to": "maqsam-caller-profile",
+   "stats_filter": "[]",
+   "type": "Page"
+  },
+  {
+   "color": "Green",
+   "doc_view": "List",
+   "label": "Maqsam Settings",
+   "link_to": "Maqsam Settings",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Blue",
+   "doc_view": "List",
+   "label": "Maqsam Call Log",
+   "link_to": "Maqsam Call Log",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Blue",
+   "doc_view": "List",
+   "label": "Patient Appointment",
+   "link_to": "Patient Appointment",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Cyan",
+   "doc_view": "List",
+   "label": "Patient",
+   "link_to": "Patient",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Customer",
+   "link_to": "Customer",
+   "stats_filter": "[]",
+   "type": "DocType"
+  }
+ ],
+ "title": "Maqsam Call Center",
+ "type": "Workspace"
+}

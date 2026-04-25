@@ -1,0 +1,151 @@
+{
+ "actions": [],
+ "creation": "2026-04-22 22:45:00.000000",
+ "doctype": "DocType",
+ "document_type": "System",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "default_agent_email",
+  "column_break_defaults",
+  "default_caller",
+  "timeout_seconds",
+  "incoming_section",
+  "enable_incoming_call_popup",
+  "incoming_webhook_url",
+  "column_break_incoming",
+  "incoming_webhook_token",
+  "connection_section",
+  "base_url",
+  "access_key_id",
+  "column_break_credentials",
+  "access_secret",
+  "help_section",
+  "help_text"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "description": "Master switch for the Maqsam integration inside Gain.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enable Maqsam Integration"
+  },
+  {
+   "description": "Optional fallback agent email for click-to-call if the current Gain user is not mapped yet.",
+   "fieldname": "default_agent_email",
+   "fieldtype": "Data",
+   "label": "Default Agent Email"
+  },
+  {
+   "fieldname": "column_break_defaults",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Optional caller number to use for outbound calls when no value is provided manually.",
+   "fieldname": "default_caller",
+   "fieldtype": "Data",
+   "label": "Default Caller Number"
+  },
+  {
+   "default": "30",
+   "fieldname": "timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Timeout Seconds",
+   "reqd": 1
+  },
+  {
+   "fieldname": "incoming_section",
+   "fieldtype": "Section Break",
+   "label": "Incoming Calls"
+  },
+  {
+   "default": "1",
+   "description": "Show Caller Profile popup to the Maqsam agent when an incoming call webhook is received.",
+   "fieldname": "enable_incoming_call_popup",
+   "fieldtype": "Check",
+   "label": "Enable Incoming Call Popup"
+  },
+  {
+   "description": "Copy this URL into the Maqsam IVR/webhook configuration. Send the token as token query parameter, Bearer token, or X-Maqsam-Webhook-Token header.",
+   "fieldname": "incoming_webhook_url",
+   "fieldtype": "Data",
+   "label": "Incoming Webhook URL",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_incoming",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Shared secret used to validate incoming Maqsam call events.",
+   "fieldname": "incoming_webhook_token",
+   "fieldtype": "Password",
+   "label": "Incoming Webhook Token"
+  },
+  {
+   "fieldname": "connection_section",
+   "fieldtype": "Section Break",
+   "label": "Connection"
+  },
+  {
+   "description": "Example: av.maqsam.com",
+   "fieldname": "base_url",
+   "fieldtype": "Data",
+   "label": "Base URL",
+   "reqd": 1
+  },
+  {
+   "fieldname": "access_key_id",
+   "fieldtype": "Data",
+   "label": "Access Key ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_credentials",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "access_secret",
+   "fieldtype": "Password",
+   "label": "Access Secret",
+   "reqd": 1
+  },
+  {
+   "fieldname": "help_section",
+   "fieldtype": "Section Break",
+   "label": "Help"
+  },
+  {
+   "fieldname": "help_text",
+   "fieldtype": "HTML",
+   "label": "Help"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-04-22 22:45:00.000000",
+ "modified_by": "Administrator",
+ "module": "Gain Maqsam Integration",
+ "name": "Maqsam Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
