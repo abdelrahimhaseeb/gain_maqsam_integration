@@ -94,10 +94,6 @@ def _get_request_token() -> str:
             if token:
                 return token
 
-        authorization = cstr(frappe.request.headers.get("Authorization")).strip()
-        if authorization.lower().startswith("bearer "):
-            return authorization[7:].strip()
-
     return ""
 
 
@@ -453,24 +449,42 @@ def maqsam_receive_call_event() -> dict[str, Any]:
     agent_email = _extract_agent_email(payload, call)
     target_user = _resolve_user_from_email(agent_email)
 
-    if settings and settings.get("enable_incoming_call_popup") and target_user:
-        frappe.publish_realtime(
-            "maqsam_incoming_call",
-            {
-                "call_log": log_name,
-                "maqsam_call_id": call.get("id"),
-                "agent_email": agent_email,
-                "profile": profile,
-            },
-            user=target_user,
-        )
+    if not target_user and settings:
+        target_user = _resolve_user_from_email(cstr(settings.get("default_agent_email")))
+
+    target_users: list[str] = []
+    if target_user:
+        target_users = [target_user]
+    elif settings and settings.get("enable_incoming_call_popup"):
+        target_users = [
+            u.name
+            for u in frappe.get_all(
+                "User",
+                filters={"enabled": 1, "user_type": "System User", "name": ["!=", "Administrator"]},
+                fields=["name"],
+            )
+        ]
+
+    popup_sent = False
+    if settings and settings.get("enable_incoming_call_popup") and target_users:
+        event_data = {
+            "call_log": log_name,
+            "maqsam_call_id": call.get("id"),
+            "agent_email": agent_email,
+            "state": cstr(call.get("state") or "ringing"),
+            "profile": profile,
+        }
+        for user in target_users:
+            frappe.publish_realtime("maqsam_incoming_call", event_data, user=user)
+        popup_sent = True
 
     return {
         "ok": True,
         "call_log": log_name,
         "created": created,
-        "popup_sent": bool(settings and settings.get("enable_incoming_call_popup") and target_user),
+        "popup_sent": popup_sent,
         "target_user": target_user,
+        "broadcast_count": len(target_users),
     }
 
 

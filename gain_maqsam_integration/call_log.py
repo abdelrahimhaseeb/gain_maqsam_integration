@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import frappe
@@ -54,9 +54,17 @@ def _parse_timestamp(value: Any) -> datetime:
         return datetime.fromtimestamp(seconds)
 
     try:
-        return get_datetime(value)
+        result = get_datetime(value)
     except Exception:
         return now_datetime()
+
+    if result is None:
+        return now_datetime()
+
+    if getattr(result, "tzinfo", None) is not None:
+        result = result.astimezone(timezone.utc).replace(tzinfo=None)
+
+    return result
 
 
 def _extract_nested_value(payload: Any, keys: tuple[str, ...]) -> Any:

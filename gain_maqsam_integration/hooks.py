@@ -7,7 +7,7 @@ app_license = "mit"
 
 required_apps = ["erpnext"]
 
-app_include_js = ["/assets/gain_maqsam_integration/js/maqsam_caller_360.js"]
+app_include_js = ["maqsam_caller_360.bundle.js"]
 
 doctype_js = {
 	"Maqsam Settings": "public/js/maqsam_settings.js",
