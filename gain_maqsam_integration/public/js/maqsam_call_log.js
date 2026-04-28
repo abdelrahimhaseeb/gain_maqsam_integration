@@ -85,6 +85,29 @@
 		return doc.callee_number || doc.normalized_phone || "";
 	}
 
+	function formatPhone(raw) {
+		const digits = String(raw || "").replace(/\D/g, "");
+		if (!digits) return "";
+		if (digits.startsWith("966") && digits.length === 12) {
+			return `+966 ${digits.slice(3, 5)} ${digits.slice(5, 8)} ${digits.slice(8)}`;
+		}
+		if (digits.length >= 10) {
+			return `+${digits.slice(0, digits.length - 9)} ${digits.slice(-9, -6)} ${digits.slice(-6, -3)} ${digits.slice(-3)}`;
+		}
+		return `+${digits}`;
+	}
+
+	function getLinkedIcon(doctype) {
+		const map = {
+			Patient: "🩺",
+			Customer: "👤",
+			Lead: "🎯",
+			Contact: "📇",
+			"Patient Appointment": "📅",
+		};
+		return map[doctype] || "📂";
+	}
+
 	function getGainNumber(doc) {
 		if (String(doc.direction || "").toLowerCase() === "inbound") {
 			return doc.callee_number || "";
@@ -844,272 +867,352 @@
 		const outcome = getOutcomeMeta(doc.outcome, doc.state);
 		const customerNumber = getCustomerNumber(doc);
 		const gainNumber = getGainNumber(doc);
-		const linkedTitle = doc.linked_title || doc.linked_docname || __("Unlinked record");
-		const agent = doc.agent_name || doc.agent_email || __("Unassigned agent");
-		const agentEmail = doc.agent_email && doc.agent_name ? ` · ${doc.agent_email}` : "";
+		const customerFormatted = formatPhone(customerNumber) || customerNumber || __("Not available");
+		const gainFormatted = formatPhone(gainNumber) || gainNumber || __("Not available");
+		const linkedTitle = doc.linked_title || doc.linked_docname || "";
+		const linkedIcon = getLinkedIcon(doc.linked_doctype);
+		const agent = doc.agent_name || doc.agent_email || __("Unassigned");
 		const notes = String(doc.notes || "").trim();
 		const payload = parsePayload(doc.raw_payload) || {};
 		const summary = getPayloadSummary(payload, doc);
 		const readableSummary = getReadablePayloadSummary(payload, doc, summary, outcome, direction);
-		const followUpHtml =
-			doc.follow_up_required || doc.follow_up_date
-				? `
-					<div class="maqsam-call-message system">
-						<div class="message-title">${__("Follow-up")}</div>
-						<div>${doc.follow_up_required ? __("Required") : __("Optional")}${
-							doc.follow_up_date ? ` · ${escapeHtml(frappe.datetime.str_to_user(doc.follow_up_date))}` : ""
-						}</div>
-					</div>
-				`
-				: "";
+		const recordingUrl = doc.name && doc.maqsam_call_id
+			? `/api/method/gain_maqsam_integration.api.maqsam_get_call_recording?call_log=${encodeURIComponent(doc.name)}`
+			: "";
+		const recordingSavedInitial = Boolean(doc.recording_file);
 
-		const linkedHtml =
-			doc.linked_doctype && doc.linked_docname
-				? `
-					<button class="btn btn-xs btn-default maqsam-linked-record" type="button">
-						${escapeHtml(doc.linked_doctype)}: ${escapeHtml(linkedTitle)}
-					</button>
-				`
-				: `<span class="text-muted">${escapeHtml(linkedTitle)}</span>`;
+		const directionEmoji = direction.className === "incoming" ? "📥" : direction.className === "outgoing" ? "📤" : "📞";
+
+		const linkedButton = doc.linked_doctype && doc.linked_docname
+			? `<button class="mcl-action mcl-linked" type="button" data-doctype="${escapeHtml(doc.linked_doctype)}" data-name="${escapeHtml(doc.linked_docname)}">
+				${linkedIcon} ${escapeHtml(linkedTitle || doc.linked_docname)} <span class="mcl-action-sub">${escapeHtml(doc.linked_doctype)}</span>
+			</button>`
+			: "";
+
+		const followUpBadge = doc.follow_up_required
+			? `<span class="mcl-pill warn">📅 ${__("Follow-up")}${doc.follow_up_date ? " · " + escapeHtml(frappe.datetime.str_to_user(doc.follow_up_date)) : ""}</span>`
+			: "";
 
 		const html = `
 			<style>
-				.maqsam-call-view {
-					background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
-					border: 1px solid #e2e8f0;
-					border-radius: 18px;
-					padding: 18px;
-					max-width: 820px;
-				}
-				.maqsam-call-header {
-					display: flex;
-					align-items: center;
-					justify-content: space-between;
-					gap: 12px;
-					margin-bottom: 16px;
-				}
-				.maqsam-call-title {
-					display: flex;
-					align-items: center;
-					gap: 10px;
-					font-size: 18px;
-					font-weight: 700;
-					color: #0f172a;
-				}
-				.maqsam-call-dot {
-					width: 12px;
-					height: 12px;
-					border-radius: 50%;
-					background: ${direction.indicator};
-					box-shadow: 0 0 0 5px ${direction.indicator}22;
-				}
-				.maqsam-call-chip {
-					border-radius: 999px;
-					background: ${outcome.bg};
-					color: ${outcome.color};
-					font-size: 12px;
-					font-weight: 700;
-					padding: 5px 10px;
-					white-space: nowrap;
-				}
-				.maqsam-call-thread {
-					display: flex;
-					flex-direction: column;
-					gap: 10px;
-				}
-				.maqsam-call-message {
-					border-radius: 16px;
-					padding: 12px 14px;
-					max-width: 72%;
-					box-shadow: 0 1px 2px rgba(15, 23, 42, .08);
-					line-height: 1.55;
-				}
-				.maqsam-call-message.incoming {
-					align-self: flex-start;
-					background: #ffffff;
-					border-top-left-radius: 4px;
-				}
-				.maqsam-call-message.outgoing {
-					align-self: flex-end;
-					background: #dbeafe;
-					border-top-right-radius: 4px;
-				}
-				.maqsam-call-message.system {
-					align-self: center;
-					background: #f1f5f9;
-					color: #475569;
-					max-width: 92%;
-					text-align: center;
-					font-size: 13px;
-				}
-				.message-title {
-					font-size: 12px;
-					font-weight: 700;
-					color: #64748b;
-					text-transform: uppercase;
-					letter-spacing: .04em;
-					margin-bottom: 4px;
-				}
-				.message-main {
-					font-size: 15px;
-					font-weight: 650;
-					color: #0f172a;
-				}
-				.message-muted {
-					color: #64748b;
-					font-size: 13px;
-					margin-top: 4px;
-				}
-				.maqsam-call-meta-grid {
-					display: grid;
-					grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-					gap: 10px;
-					margin-top: 16px;
-				}
-				.maqsam-call-meta {
-					background: rgba(255, 255, 255, .72);
-					border: 1px solid #e2e8f0;
-					border-radius: 14px;
-					padding: 10px 12px;
-				}
-				.maqsam-call-meta-label {
-					color: #64748b;
-					font-size: 12px;
-					margin-bottom: 3px;
-				}
-					.maqsam-call-meta-value {
-						color: #0f172a;
-						font-weight: 650;
-						word-break: break-word;
-					}
-					.maqsam-call-summary {
-						background: #fff8dc;
-						border: 1px solid #f3df9f;
-						border-radius: 14px;
-						color: #3f3a22;
-						padding: 12px 14px;
-						margin-bottom: 14px;
-						box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
-					}
-					.maqsam-call-summary-title {
-						color: #5f4b00;
-						font-size: 12px;
-						font-weight: 850;
-						letter-spacing: .04em;
-						text-transform: uppercase;
-						margin-bottom: 4px;
-					}
-					.maqsam-call-summary-text {
-						color: #1f2937;
-						font-size: 13px;
-						line-height: 1.55;
-					}
-					.maqsam-call-summary .localized-summary-lines {
-						display: grid;
-						gap: 8px;
-					}
-					.maqsam-call-summary .localized-summary-line {
-						display: grid;
-						grid-template-columns: 82px 1fr;
-						gap: 10px;
-						align-items: start;
-					}
-					.maqsam-call-summary .localized-summary-label {
-						color: #8a6b00;
-						font-size: 11px;
-						font-weight: 850;
-						text-transform: uppercase;
-						letter-spacing: .04em;
-					}
-					.maqsam-call-summary .localized-summary-text {
-						color: #1f2937;
-						font-size: 13px;
-						line-height: 1.55;
-					}
-					.maqsam-call-summary .localized-summary-line.arabic .localized-summary-text {
-						text-align: right;
-					}
-					.maqsam-call-summary .localized-summary-empty {
-						color: #8a6b00;
-						font-size: 13px;
-					}
-				</style>
-				<div class="maqsam-call-view">
-					<div class="maqsam-call-header">
-						<div class="maqsam-call-title">
-						<span class="maqsam-call-dot"></span>
-						<span>${escapeHtml(direction.label)}</span>
-						</div>
-						<span class="maqsam-call-chip">${escapeHtml(outcome.label)}</span>
-					</div>
-					<div class="maqsam-call-summary">
-						<div class="maqsam-call-summary-title">${__("Summary")}</div>
-						<div class="maqsam-call-summary-text">${renderSummaryLines(readableSummary)}</div>
-					</div>
-					<div class="maqsam-call-thread">
-						<div class="maqsam-call-message ${direction.className}">
-						<div class="message-title">${escapeHtml(direction.chip)}</div>
-						<div class="message-main">
-							${
-								direction.className === "incoming"
-									? __("Customer called Gain number")
-									: __("Agent called customer")
-							}
-						</div>
-						<div class="message-muted">
-							${__("Customer")}: ${escapeHtml(customerNumber || __("Not available"))}
-						</div>
-						<div class="message-muted">
-							${__("Gain Number")}: ${escapeHtml(gainNumber || __("Not available"))}
+				.mcl { color: #0f172a; max-width: 880px; }
+				.mcl * { box-sizing: border-box; }
+				.mcl-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; box-shadow: 0 1px 2px rgba(15, 23, 42, .04); }
+				.mcl-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid #f1f5f9; flex-wrap: wrap; }
+				.mcl-header-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+				.mcl-direction { display: inline-flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 700; }
+				.mcl-direction-dot { width: 10px; height: 10px; border-radius: 50%; background: ${direction.indicator}; box-shadow: 0 0 0 4px ${direction.indicator}1f; }
+				.mcl-pill { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+				.mcl-pill.outcome { background: ${outcome.bg}; color: ${outcome.color}; }
+				.mcl-pill.muted { background: #f1f5f9; color: #475569; }
+				.mcl-pill.warn { background: #fef3c7; color: #92400e; }
+				.mcl-meta-line { color: #64748b; font-size: 13px; }
+
+				.mcl-recording { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid #f1f5f9; flex-wrap: wrap; }
+				.mcl-recording audio { flex: 1; min-width: 240px; height: 36px; }
+				.mcl-recording-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+				.mcl-recording-status { color: #64748b; font-size: 12px; }
+				.mcl-recording-error { color: #b91c1c; }
+
+				.mcl-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #f1f5f9; }
+				.mcl-action { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 10px; border: 1px solid #e2e8f0; background: #fff; color: #0f172a; font-weight: 600; font-size: 13px; cursor: pointer; transition: all .15s; }
+				.mcl-action:hover { background: #f8fafc; border-color: #cbd5e1; }
+				.mcl-action.primary { background: #0f766e; color: #fff; border-color: #0f766e; }
+				.mcl-action.primary:hover { background: #115e59; }
+				.mcl-action.danger { color: #991b1b; border-color: #fecaca; }
+				.mcl-action.danger:hover { background: #fee2e2; }
+				.mcl-action-sub { font-size: 11px; color: #64748b; font-weight: 500; margin-inline-start: 4px; }
+				.mcl-action.mcl-linked .mcl-action-sub { color: rgba(15, 23, 42, .55); }
+
+				.mcl-numbers { display: flex; align-items: center; gap: 10px; padding: 14px 16px; font-size: 14px; flex-wrap: wrap; }
+				.mcl-num { font-variant-numeric: tabular-nums; font-weight: 700; }
+				.mcl-num-label { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+				.mcl-arrow { color: #94a3b8; font-size: 18px; }
+				.mcl-num-block { min-width: 140px; }
+
+				.mcl-summary { background: #fff8dc; border-top: 1px solid #f3df9f; padding: 12px 16px; }
+				.mcl-summary-title { color: #5f4b00; font-size: 11px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 6px; }
+				.mcl-summary .localized-summary-lines { display: grid; gap: 6px; }
+				.mcl-summary .localized-summary-line { display: grid; grid-template-columns: 70px 1fr; gap: 10px; align-items: start; }
+				.mcl-summary .localized-summary-label { color: #8a6b00; font-size: 10px; font-weight: 850; text-transform: uppercase; }
+				.mcl-summary .localized-summary-text { color: #1f2937; font-size: 13px; line-height: 1.55; }
+				.mcl-summary .localized-summary-line.arabic .localized-summary-text { text-align: right; }
+
+				.mcl-notes { padding: 14px 16px; border-top: 1px solid #f1f5f9; }
+				.mcl-notes-title { color: #475569; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+				.mcl-notes-text { color: #0f172a; font-size: 13px; line-height: 1.55; white-space: pre-wrap; min-height: 22px; }
+				.mcl-notes-text:empty::before { content: "${__("Click here to add a note...")}"; color: #94a3b8; font-style: italic; }
+				.mcl-notes-text:hover { background: #f8fafc; cursor: text; border-radius: 6px; }
+				.mcl-notes-text[contenteditable="true"] { background: #fefce8; padding: 6px 8px; outline: 2px solid #facc15; border-radius: 6px; cursor: text; }
+
+				.mcl-footer { padding: 10px 16px; border-top: 1px solid #f1f5f9; display: flex; flex-wrap: wrap; gap: 12px; color: #64748b; font-size: 11px; }
+				.mcl-footer code { font-family: ui-monospace, SFMono-Regular, monospace; color: #475569; background: #f8fafc; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+			</style>
+			<div class="mcl">
+				<div class="mcl-card">
+					<div class="mcl-header">
+						<div class="mcl-header-main">
+							<span class="mcl-direction"><span class="mcl-direction-dot"></span>${directionEmoji} ${escapeHtml(direction.label)}</span>
+							<span class="mcl-pill outcome">${escapeHtml(outcome.label)}</span>
+							<span class="mcl-meta-line">·  ${escapeHtml(formatDuration(doc.duration))}</span>
+							<span class="mcl-meta-line">·  ${escapeHtml(formatDateTime(doc.timestamp))}</span>
+							${followUpBadge}
 						</div>
 					</div>
-					<div class="maqsam-call-message system">
-						<div class="message-title">${__("Call Result")}</div>
-						<div>${escapeHtml(outcome.label)} · ${escapeHtml(formatDuration(doc.duration))}</div>
-						<div class="message-muted">${escapeHtml(formatDateTime(doc.timestamp))}</div>
+
+					${recordingUrl ? `
+						<div class="mcl-recording mcl-recording-block">
+							<audio controls preload="metadata"></audio>
+							<div class="mcl-recording-actions">
+								<button type="button" class="mcl-action wa-load-recording" data-recording-url="${escapeHtml(recordingUrl)}">${__("Load")}</button>
+								<button type="button" class="mcl-action wa-save-recording" ${recordingSavedInitial ? "disabled" : ""}>${recordingSavedInitial ? __("Saved") : __("Save")}</button>
+								<button type="button" class="mcl-action wa-download-recording" data-recording-url="${escapeHtml(recordingUrl)}">${__("Download")}</button>
+								<span class="wa-recording-status mcl-recording-status">${recordingSavedInitial ? __("Stored in Gain") : __("Click Load to play")}</span>
+							</div>
+						</div>
+					` : ""}
+
+					<div class="mcl-actions">
+						${customerNumber ? `<button type="button" class="mcl-action primary" data-action="call-back" data-phone="${escapeHtml(customerNumber)}">📞 ${__("Call Back")}</button>` : ""}
+						${linkedButton}
+						<button type="button" class="mcl-action" data-action="add-note">📝 ${__("Add Note")}</button>
+						<button type="button" class="mcl-action danger" data-action="tag" data-label="Wrong Number">🚫 ${__("Wrong Number")}</button>
+						<button type="button" class="mcl-action danger" data-action="tag" data-label="Spam">⛔ ${__("Spam")}</button>
 					</div>
-					${
-						notes
-							? `<div class="maqsam-call-message system"><div class="message-title">${__("Notes")}</div><div>${escapeHtml(notes)}</div></div>`
-							: ""
-					}
-					${followUpHtml}
-				</div>
-				<div class="maqsam-call-meta-grid">
-					<div class="maqsam-call-meta">
-						<div class="maqsam-call-meta-label">${__("Linked Record")}</div>
-						<div class="maqsam-call-meta-value">${linkedHtml}</div>
+
+					<div class="mcl-numbers">
+						<div class="mcl-num-block">
+							<div class="mcl-num-label">${__("Customer")}</div>
+							<div class="mcl-num">${escapeHtml(customerFormatted)}</div>
+						</div>
+						<div class="mcl-arrow">${direction.className === "incoming" ? "→" : "←"}</div>
+						<div class="mcl-num-block">
+							<div class="mcl-num-label">${__("Gain Number")}</div>
+							<div class="mcl-num">${escapeHtml(gainFormatted)}</div>
+						</div>
+						<div class="mcl-num-block" style="margin-inline-start: auto;">
+							<div class="mcl-num-label">${__("Agent")}</div>
+							<div class="mcl-num" style="font-weight: 600; font-size: 13px;">${escapeHtml(agent)}</div>
+						</div>
 					</div>
-					<div class="maqsam-call-meta">
-						<div class="maqsam-call-meta-label">${__("Agent")}</div>
-						<div class="maqsam-call-meta-value">${escapeHtml(agent)}${escapeHtml(agentEmail)}</div>
+
+					<div class="mcl-summary">
+						<div class="mcl-summary-title">${__("AI Summary")}</div>
+						${renderSummaryLines(readableSummary)}
 					</div>
-					<div class="maqsam-call-meta">
-						<div class="maqsam-call-meta-label">${__("Maqsam Call ID")}</div>
-						<div class="maqsam-call-meta-value">${escapeHtml(doc.maqsam_call_id || __("Not available"))}</div>
+
+					<div class="mcl-notes">
+						<div class="mcl-notes-title">
+							<span>${__("Notes")}</span>
+							<span class="text-muted" style="font-weight: 500; font-size: 10px;">${__("Click text to edit")}</span>
+						</div>
+						<div class="mcl-notes-text" data-notes-editable>${escapeHtml(notes)}</div>
 					</div>
-					<div class="maqsam-call-meta">
-						<div class="maqsam-call-meta-label">${__("Source")}</div>
-						<div class="maqsam-call-meta-value">${escapeHtml(doc.source || __("Not available"))}</div>
+
+					<div class="mcl-footer">
+						<span>${__("Call ID")}: <code>${escapeHtml(doc.maqsam_call_id || "—")}</code></span>
+						<span>${__("Source")}: ${escapeHtml(doc.source || "—")}</span>
+						<span>${escapeHtml(doc.name || "")}</span>
 					</div>
 				</div>
 			</div>
 		`;
 
-		frm.fields_dict.call_view_html?.$wrapper.html(html);
-		frm.fields_dict.call_view_html?.$wrapper
-			.find(".maqsam-linked-record")
-			.on("click", () => frappe.set_route("Form", doc.linked_doctype, doc.linked_docname));
+		const wrapper = frm.fields_dict.call_view_html?.$wrapper;
+		if (!wrapper) return;
+		wrapper.html(html);
+		bindCallViewActions(frm, wrapper, doc, recordingUrl);
+	}
+
+	function bindCallViewActions(frm, wrapper, doc, recordingUrl) {
+		// Linked record open
+		wrapper.find(".mcl-linked").on("click", function () {
+			const dt = $(this).data("doctype");
+			const name = $(this).data("name");
+			if (dt && name) frappe.set_route("Form", dt, name);
+		});
+
+		// Call Back via maqsam_create_click_to_call
+		wrapper.find('[data-action="call-back"]').on("click", async function () {
+			const button = $(this);
+			const phone = button.data("phone");
+			if (!phone) return;
+			button.prop("disabled", true).text(__("Calling..."));
+			try {
+				await frappe.xcall("gain_maqsam_integration.api.maqsam_create_click_to_call", {
+					phone: String(phone),
+					doctype: doc.linked_doctype || null,
+					docname: doc.linked_docname || null,
+				});
+				frappe.show_alert({ message: __("Call placed via Maqsam"), indicator: "green" });
+			} catch (error) {
+				frappe.show_alert({ message: error.message || __("Could not place call"), indicator: "red" });
+			} finally {
+				button.prop("disabled", false).html(`📞 ${__("Call Back")}`);
+			}
+		});
+
+		// Add Note: focuses the inline editable area
+		wrapper.find('[data-action="add-note"]').on("click", () => {
+			const target = wrapper.find("[data-notes-editable]");
+			target.attr("contenteditable", "true").focus();
+		});
+
+		// Wrong Number / Spam tagging
+		wrapper.find('[data-action="tag"]').on("click", async function () {
+			const button = $(this);
+			const label = button.data("label");
+			button.prop("disabled", true);
+			try {
+				await frappe.xcall("gain_maqsam_integration.api.maqsam_tag_call", {
+					call_log: doc.name,
+					label,
+				});
+				frappe.show_alert({ message: __("Marked as {0}", [label]), indicator: "orange" });
+				frm.reload_doc();
+			} catch (error) {
+				frappe.show_alert({ message: error.message || __("Could not tag call"), indicator: "red" });
+				button.prop("disabled", false);
+			}
+		});
+
+		// Inline notes editor
+		const notesEl = wrapper.find("[data-notes-editable]");
+		notesEl.on("click", function () {
+			$(this).attr("contenteditable", "true").focus();
+		});
+		notesEl.on("blur", async function () {
+			const newValue = $(this).text().trim();
+			$(this).removeAttr("contenteditable");
+			if (newValue === String(doc.notes || "").trim()) return;
+			try {
+				await frappe.xcall("gain_maqsam_integration.api.maqsam_update_call_outcome", {
+					call_log: doc.name,
+					notes: newValue,
+				});
+				doc.notes = newValue;
+				if (frm.doc) frm.doc.notes = newValue;
+				frappe.show_alert({ message: __("Note saved"), indicator: "green" });
+			} catch (error) {
+				frappe.show_alert({ message: error.message || __("Could not save note"), indicator: "red" });
+			}
+		});
+		notesEl.on("keydown", function (e) {
+			if (e.key === "Escape") $(this).blur();
+			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $(this).blur();
+		});
+
+		// Recording controls — wire onto the same handlers used by Payload View by
+		// re-using the existing logic in the wrapper (it scans for these classes).
+		bindRecordingControls(frm, wrapper, doc, recordingUrl);
+	}
+
+	function bindRecordingControls(frm, wrapper, doc, recordingUrl) {
+		if (!recordingUrl) return;
+		let recordingSaved = Boolean(doc.recording_file);
+
+		async function fetchRecordingBlob(url) {
+			const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+			if (!response.ok) {
+				let message = `${response.status} ${response.statusText}`;
+				try {
+					const payload = await response.json();
+					message = payload.message || payload.exception || message;
+				} catch (_) {}
+				throw new Error(message);
+			}
+			const blob = await response.blob();
+			if (!blob.size) throw new Error(__("Maqsam returned an empty recording file."));
+			return blob;
+		}
+
+		async function saveRecordingIfNeeded(block, status) {
+			if (recordingSaved) return;
+			const saveBtn = block.find(".wa-save-recording");
+			status.removeClass("mcl-recording-error").text(__("Saving..."));
+			saveBtn.prop("disabled", true).text(__("Saving..."));
+			const result = await frappe.xcall("gain_maqsam_integration.api.maqsam_save_call_recording", {
+				call_log: doc.name,
+			});
+			recordingSaved = true;
+			doc.recording_file = result.file_url || doc.recording_file || "__saved__";
+			if (frm.doc && frm.doc.name === doc.name) frm.doc.recording_file = doc.recording_file;
+			saveBtn.text(__("Saved"));
+			status.text(__("Stored in Gain"));
+		}
+
+		wrapper.find(".mcl-recording-block .wa-save-recording").on("click", async function () {
+			const btn = $(this);
+			const block = btn.closest(".mcl-recording-block");
+			const status = block.find(".wa-recording-status");
+			btn.prop("disabled", true);
+			try {
+				await saveRecordingIfNeeded(block, status);
+			} catch (error) {
+				status.addClass("mcl-recording-error").text(error.message || __("Could not save recording."));
+				btn.prop("disabled", false);
+			}
+		});
+
+		wrapper.find(".mcl-recording-block .wa-load-recording").on("click", async function () {
+			const btn = $(this);
+			const block = btn.closest(".mcl-recording-block");
+			const status = block.find(".wa-recording-status");
+			const audio = block.find("audio").get(0);
+			const url = btn.attr("data-recording-url");
+			btn.prop("disabled", true);
+			try {
+				await saveRecordingIfNeeded(block, status);
+				status.removeClass("mcl-recording-error").text(__("Loading..."));
+				const blob = await fetchRecordingBlob(url);
+				if (audio.dataset.objectUrl) URL.revokeObjectURL(audio.dataset.objectUrl);
+				const objectUrl = URL.createObjectURL(blob);
+				audio.dataset.objectUrl = objectUrl;
+				audio.src = objectUrl;
+				audio.load();
+				audio.play().catch(() => {});
+				status.text(__("Loaded"));
+				btn.text(__("Reload"));
+			} catch (error) {
+				status.addClass("mcl-recording-error").text(error.message || __("Could not load recording."));
+			} finally {
+				btn.prop("disabled", false);
+			}
+		});
+
+		wrapper.find(".mcl-recording-block .wa-download-recording").on("click", async function () {
+			const btn = $(this);
+			const block = btn.closest(".mcl-recording-block");
+			const status = block.find(".wa-recording-status");
+			const url = btn.attr("data-recording-url");
+			const downloadUrl = `${url}${url.includes("?") ? "&" : "?"}download=1`;
+			btn.prop("disabled", true);
+			try {
+				await saveRecordingIfNeeded(block, status);
+				window.location.href = downloadUrl;
+			} catch (error) {
+				status.addClass("mcl-recording-error").text(error.message || __("Could not download recording."));
+			} finally {
+				btn.prop("disabled", false);
+			}
+		});
 	}
 
 	frappe.ui.form.on("Maqsam Call Log", {
 		refresh(frm) {
 			renderCallView(frm);
 			renderPayloadView(frm);
+
+			// Raw JSON tab is for engineers — hide for everyone except System Manager.
+			const isSystemManager = (frappe.user_roles || []).includes("System Manager");
+			frm.fields_dict.raw_payload_tab?.df && frm.toggle_display("raw_payload_tab", isSystemManager);
+			frm.fields_dict.raw_payload_section?.df && frm.toggle_display("raw_payload_section", isSystemManager);
+			frm.fields_dict.raw_payload?.df && frm.toggle_display("raw_payload", isSystemManager);
+
 			if (!frm.is_new()) {
-    frm.add_custom_button(__("Caller Profile"), async () => {
+				frm.add_custom_button(__("Caller Profile"), async () => {
 					const profile = await gain_maqsam.caller360.fetchProfile({ call_log: frm.doc.name });
-      gain_maqsam.caller360.showDialog(profile, { title: __("Caller Profile") });
+					gain_maqsam.caller360.showDialog(profile, { title: __("Caller Profile") });
 				});
 			}
 		},
