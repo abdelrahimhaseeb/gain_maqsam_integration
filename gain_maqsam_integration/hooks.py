@@ -25,7 +25,7 @@ doctype_list_js = {
 
 scheduler_events = {
 	"cron": {
-		"* * * * *": [
+		"*/5 * * * *": [
 			"gain_maqsam_integration.api.maqsam_auto_sync_recent_calls",
 		],
 	},

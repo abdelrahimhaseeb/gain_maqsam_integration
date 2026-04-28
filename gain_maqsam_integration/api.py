@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import hmac
 import json
 import re
 from typing import Any
 
 import frappe
+from frappe.rate_limiter import rate_limit
 from frappe.utils import cstr, now_datetime
 from frappe.utils.file_manager import save_file
+
+
+MAQSAM_AGENT_ROLE = "Maqsam Agent"
 
 from gain_maqsam_integration.call_log import (
     create_gain_call_log,
@@ -428,11 +433,40 @@ def maqsam_get_caller_profile(
     return get_caller_profile(phone=phone, call_log=call_log, maqsam_call_id=maqsam_call_id)
 
 
+def _get_broadcast_users() -> list[str]:
+    """Users who should see the incoming-call popup when no specific agent is resolved."""
+    has_role = frappe.db.exists("Role", MAQSAM_AGENT_ROLE)
+    if has_role:
+        rows = frappe.get_all(
+            "Has Role",
+            filters={"role": MAQSAM_AGENT_ROLE, "parenttype": "User"},
+            fields=["parent"],
+        )
+        users = {row.parent for row in rows}
+        if users:
+            enabled = frappe.get_all(
+                "User",
+                filters={"enabled": 1, "name": ["in", list(users)]},
+                pluck="name",
+            )
+            return [u for u in enabled if u != "Administrator"]
+
+    return [
+        u.name
+        for u in frappe.get_all(
+            "User",
+            filters={"enabled": 1, "user_type": "System User", "name": ["!=", "Administrator"]},
+            fields=["name"],
+        )
+    ]
+
+
 @frappe.whitelist(allow_guest=True)
+@rate_limit(limit=120, seconds=60)
 def maqsam_receive_call_event() -> dict[str, Any]:
     expected_token = _get_incoming_webhook_token()
     received_token = _get_request_token()
-    if not expected_token or not received_token or received_token != expected_token:
+    if not expected_token or not received_token or not hmac.compare_digest(received_token, expected_token):
         frappe.throw("Invalid Maqsam webhook token.", frappe.PermissionError)
 
     payload = _get_request_payload()
@@ -440,43 +474,42 @@ def maqsam_receive_call_event() -> dict[str, Any]:
     if not call.get("id"):
         frappe.throw("Maqsam webhook payload does not include a call id.")
 
-    log_name, created = upsert_maqsam_call(call)
-    frappe.db.commit()
+    original_user = frappe.session.user
+    frappe.set_user("Administrator")
+    try:
+        log_name, created = upsert_maqsam_call(call)
+        frappe.db.commit()
 
-    profile_phone = _get_customer_phone_from_call(call)
-    profile = get_caller_profile(phone=profile_phone) if profile_phone else {}
-    settings = _get_maqsam_settings()
-    agent_email = _extract_agent_email(payload, call)
-    target_user = _resolve_user_from_email(agent_email)
+        profile_phone = _get_customer_phone_from_call(call)
+        profile = get_caller_profile(phone=profile_phone) if profile_phone else {}
+        settings = _get_maqsam_settings()
+        agent_email = _extract_agent_email(payload, call)
+        target_user = _resolve_user_from_email(agent_email)
 
-    if not target_user and settings:
-        target_user = _resolve_user_from_email(cstr(settings.get("default_agent_email")))
+        if not target_user and settings:
+            target_user = _resolve_user_from_email(cstr(settings.get("default_agent_email")))
 
-    target_users: list[str] = []
-    if target_user:
-        target_users = [target_user]
-    elif settings and settings.get("enable_incoming_call_popup"):
-        target_users = [
-            u.name
-            for u in frappe.get_all(
-                "User",
-                filters={"enabled": 1, "user_type": "System User", "name": ["!=", "Administrator"]},
-                fields=["name"],
-            )
-        ]
+        target_users: list[str] = []
+        if target_user:
+            target_users = [target_user]
+        elif settings and settings.get("enable_incoming_call_popup"):
+            target_users = _get_broadcast_users()
 
-    popup_sent = False
-    if settings and settings.get("enable_incoming_call_popup") and target_users:
-        event_data = {
-            "call_log": log_name,
-            "maqsam_call_id": call.get("id"),
-            "agent_email": agent_email,
-            "state": cstr(call.get("state") or "ringing"),
-            "profile": profile,
-        }
-        for user in target_users:
-            frappe.publish_realtime("maqsam_incoming_call", event_data, user=user)
-        popup_sent = True
+        popup_sent = False
+        if settings and settings.get("enable_incoming_call_popup") and target_users:
+            event_data = {
+                "call_log": log_name,
+                "maqsam_call_id": call.get("id"),
+                "agent_email": agent_email,
+                "state": cstr(call.get("state") or "ringing"),
+                "profile": profile,
+            }
+            for user in target_users:
+                frappe.publish_realtime("maqsam_incoming_call", event_data, user=user)
+            popup_sent = True
+    finally:
+        frappe.set_user(original_user)
+        frappe.local.message_log = []
 
     return {
         "ok": True,

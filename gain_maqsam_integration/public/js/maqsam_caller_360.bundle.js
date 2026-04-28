@@ -359,10 +359,38 @@
 
 	let activeDrawer = null;
 	let activeTimer = null;
+	let activeCallId = null;
+	let autoCloseId = null;
+
+	const TERMINAL_STATES = new Set(["ended", "completed", "dropped", "no_answer", "busy", "failed", "answered"]);
+
+	function updateDrawerState(state) {
+		if (!activeDrawer) return;
+		const stateEl = activeDrawer.querySelector(".m360-state");
+		if (stateEl) {
+			const wrapper = document.createElement("span");
+			wrapper.innerHTML = stateBadge(state);
+			const fresh = wrapper.firstElementChild;
+			if (fresh) stateEl.replaceWith(fresh);
+		}
+		const key = String(state || "").toLowerCase().replace(/[\s-]/g, "_");
+		if (TERMINAL_STATES.has(key)) {
+			clearTimeout(autoCloseId);
+			autoCloseId = setTimeout(() => {
+				if (activeDrawer) closeDrawer(activeDrawer, activeTimer);
+				activeCallId = null;
+			}, 5000);
+		}
+	}
 
 	function showDrawer(profile, ctx = {}) {
 		injectStyles();
+		if (activeDrawer && activeCallId && activeCallId === ctx.callLog) {
+			updateDrawerState(ctx.state || "ringing");
+			return activeDrawer;
+		}
 		if (activeDrawer) closeDrawer(activeDrawer, activeTimer);
+		clearTimeout(autoCloseId);
 
 		const drawer = document.createElement("div");
 		drawer.className = "m360-drawer";
@@ -434,6 +462,7 @@
 
 		activeDrawer = drawer;
 		activeTimer = timerId;
+		activeCallId = ctx.callLog || null;
 		return drawer;
 	}
 
@@ -458,11 +487,13 @@
 		if (!frappe.realtime || !frappe.realtime.socket) return false;
 		gain_maqsam.caller360._registered = true;
 		frappe.realtime.on("maqsam_incoming_call", (event) => {
-			const key = event?.call_log || event?.maqsam_call_id || JSON.stringify(event || {});
+			const id = event?.call_log || event?.maqsam_call_id || "";
+			const state = event?.state || "ringing";
+			const key = `${id}::${state}`;
 			if (!consumeEventKey(key)) return;
 			showDrawer(event.profile || {}, {
 				callLog: event.call_log,
-				state: event.state || "ringing",
+				state,
 			});
 		});
 		return true;

@@ -4,3 +4,4 @@
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
+gain_maqsam_integration.patches.setup_maqsam_agent_role

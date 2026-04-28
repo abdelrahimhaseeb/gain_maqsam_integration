@@ -133,6 +133,11 @@ def _append_match(
     )
 
 
+def _phone_suffix(phone: str) -> str:
+    digits = digits_only(phone)
+    return digits[-7:] if len(digits) >= 7 else digits
+
+
 def _match_standard_doctype(doctype: str, lookup_numbers: list[str], matches: list[dict[str, Any]], seen: set[tuple[str, str]]) -> None:
     if not frappe.db.exists("DocType", doctype):
         return
@@ -142,15 +147,21 @@ def _match_standard_doctype(doctype: str, lookup_numbers: list[str], matches: li
     if not available_fields:
         return
 
+    suffix = _phone_suffix(lookup_numbers[0] if lookup_numbers else "")
+    if not suffix:
+        return
+
     extra_fields = []
     for field in ("patient_name", "customer_name", "lead_name", "first_name", "status", "customer"):
         if meta.has_field(field):
             extra_fields.append(field)
 
+    or_filters = [[field, "like", f"%{suffix}%"] for field in available_fields]
     records = frappe.get_all(
         doctype,
         fields=["name", *available_fields, *extra_fields],
-        limit_page_length=1000,
+        or_filters=or_filters,
+        limit_page_length=50,
         ignore_permissions=True,
     )
     for record in records:
@@ -181,11 +192,15 @@ def _match_contact_child_numbers(lookup_numbers: list[str], matches: list[dict[s
     if not frappe.db.exists("DocType", "Contact Phone"):
         return
 
+    suffix = _phone_suffix(lookup_numbers[0] if lookup_numbers else "")
+    if not suffix:
+        return
+
     rows = frappe.get_all(
         "Contact Phone",
         fields=["parent", "phone"],
-        filters={"parenttype": "Contact"},
-        limit_page_length=1000,
+        filters={"parenttype": "Contact", "phone": ["like", f"%{suffix}%"]},
+        limit_page_length=50,
         ignore_permissions=True,
     )
     for row in rows:
@@ -238,11 +253,21 @@ def find_matches(phone: str) -> list[dict[str, Any]]:
 
 def get_recent_calls(phone: str, limit: int = 10) -> list[dict[str, Any]]:
     lookup_numbers = [phone, digits_only(phone)]
+    suffix = _phone_suffix(phone)
+    if not suffix:
+        return []
+
+    or_filters = [
+        ["caller_number", "like", f"%{suffix}%"],
+        ["callee_number", "like", f"%{suffix}%"],
+        ["normalized_phone", "like", f"%{suffix}%"],
+    ]
     rows = frappe.get_all(
         "Maqsam Call Log",
         fields=CALL_LOG_FIELDS,
+        or_filters=or_filters,
         order_by="timestamp desc, creation desc",
-        limit_page_length=300,
+        limit_page_length=limit * 3,
         ignore_permissions=True,
     )
     calls = []
