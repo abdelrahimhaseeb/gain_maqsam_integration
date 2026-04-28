@@ -23,6 +23,13 @@ doctype_list_js = {
 	"Maqsam Call Log": "public/js/maqsam_call_log_list.js",
 }
 
+override_doctype_dashboards = {
+	"Patient": "gain_maqsam_integration.dashboards.patient_dashboard.get_data",
+	"Customer": "gain_maqsam_integration.dashboards.customer_dashboard.get_data",
+	"Lead": "gain_maqsam_integration.dashboards.lead_dashboard.get_data",
+	"Contact": "gain_maqsam_integration.dashboards.contact_dashboard.get_data",
+}
+
 scheduler_events = {
 	"cron": {
 		"*/5 * * * *": [
