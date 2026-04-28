@@ -737,13 +737,37 @@ def maqsam_sync_recent_calls(page: int = 1) -> dict[str, Any]:
     return _sync_recent_calls_page(page=int(page))
 
 
-def maqsam_trim_old_payloads(days: int = 90) -> dict[str, Any]:
-    """Clear raw_payload on call logs older than `days` to keep the table light.
+def _resolve_retention_days(setting_disable: str, setting_days: str, default_days: int, override: int | None) -> int | None:
+    """Pick the effective retention window from settings or an explicit override.
 
-    Wired to the daily scheduler. The structured fields (state, duration,
-    caller_number, ...) remain untouched, only the verbatim JSON blob is dropped.
+    Returns None if cleanup is disabled. Otherwise returns the positive number
+    of days to retain.
     """
-    cutoff = frappe.utils.add_days(frappe.utils.today(), -int(days))
+    if override is not None:
+        days = int(override)
+        return days if days > 0 else None
+
+    settings = _get_maqsam_settings()
+    if settings and settings.get(setting_disable):
+        return None
+
+    days = int((settings and settings.get(setting_days)) or default_days)
+    return days if days > 0 else None
+
+
+def maqsam_trim_old_payloads(days: int | None = None) -> dict[str, Any]:
+    """Clear raw_payload on call logs older than the configured retention window.
+
+    Wired to the daily scheduler. Reads `payload_retention_days` /
+    `disable_payload_cleanup` from Maqsam Settings. Pass `days` to override.
+    """
+    retention = _resolve_retention_days(
+        "disable_payload_cleanup", "payload_retention_days", 90, days
+    )
+    if retention is None:
+        return {"ok": True, "skipped": True, "reason": "payload cleanup disabled"}
+
+    cutoff = frappe.utils.add_days(frappe.utils.today(), -retention)
     frappe.db.sql(
         """
         UPDATE `tabMaqsam Call Log`
@@ -756,16 +780,23 @@ def maqsam_trim_old_payloads(days: int = 90) -> dict[str, Any]:
     )
     affected = frappe.db.sql("SELECT ROW_COUNT()")[0][0]
     frappe.db.commit()
-    return {"ok": True, "cutoff": cutoff, "rows_affected": affected}
+    return {"ok": True, "cutoff": cutoff, "retention_days": retention, "rows_affected": affected}
 
 
-def maqsam_cleanup_old_recordings(days: int = 90) -> dict[str, Any]:
-    """Delete call-recording files attached to Maqsam Call Logs older than `days`.
+def maqsam_cleanup_old_recordings(days: int | None = None) -> dict[str, Any]:
+    """Delete call-recording files older than the configured retention window.
 
-    Detaches the file metadata from the call log so the UI no longer offers a
-    stale link. Structured fields are preserved for reporting.
+    Reads `recording_retention_days` / `disable_recording_cleanup` from Maqsam
+    Settings. Pass `days` to override. Structured fields (duration, agent,
+    summary, ...) are always preserved.
     """
-    cutoff = frappe.utils.add_days(frappe.utils.today(), -int(days))
+    retention = _resolve_retention_days(
+        "disable_recording_cleanup", "recording_retention_days", 90, days
+    )
+    if retention is None:
+        return {"ok": True, "skipped": True, "reason": "recording cleanup disabled"}
+
+    cutoff = frappe.utils.add_days(frappe.utils.today(), -retention)
     candidates = frappe.db.sql(
         """
         SELECT cl.name AS call_log, cl.recording_file
@@ -804,7 +835,13 @@ def maqsam_cleanup_old_recordings(days: int = 90) -> dict[str, Any]:
         )
 
     frappe.db.commit()
-    return {"ok": True, "cutoff": cutoff, "deleted": deleted, "scanned": len(candidates)}
+    return {
+        "ok": True,
+        "cutoff": cutoff,
+        "retention_days": retention,
+        "deleted": deleted,
+        "scanned": len(candidates),
+    }
 
 
 def maqsam_auto_sync_recent_calls() -> dict[str, Any]:
