@@ -300,8 +300,15 @@
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "Desk User",
+   "role": "Maqsam Agent",
+   "share": 1,
    "write": 1
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Desk User"
   }
  ],
  "search_fields": "maqsam_call_id,agent_email,caller_number,callee_number,linked_title,linked_docname",

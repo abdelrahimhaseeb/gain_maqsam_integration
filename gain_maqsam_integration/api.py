@@ -694,7 +694,7 @@ def maqsam_trim_old_payloads(days: int = 90) -> dict[str, Any]:
     caller_number, ...) remain untouched, only the verbatim JSON blob is dropped.
     """
     cutoff = frappe.utils.add_days(frappe.utils.today(), -int(days))
-    affected = frappe.db.sql(
+    frappe.db.sql(
         """
         UPDATE `tabMaqsam Call Log`
         SET raw_payload = NULL
@@ -704,8 +704,57 @@ def maqsam_trim_old_payloads(days: int = 90) -> dict[str, Any]:
         """,
         (cutoff,),
     )
+    affected = frappe.db.sql("SELECT ROW_COUNT()")[0][0]
     frappe.db.commit()
-    return {"ok": True, "cutoff": cutoff, "rows_affected": frappe.db.sql("SELECT ROW_COUNT()")[0][0]}
+    return {"ok": True, "cutoff": cutoff, "rows_affected": affected}
+
+
+def maqsam_cleanup_old_recordings(days: int = 90) -> dict[str, Any]:
+    """Delete call-recording files attached to Maqsam Call Logs older than `days`.
+
+    Detaches the file metadata from the call log so the UI no longer offers a
+    stale link. Structured fields are preserved for reporting.
+    """
+    cutoff = frappe.utils.add_days(frappe.utils.today(), -int(days))
+    candidates = frappe.db.sql(
+        """
+        SELECT cl.name AS call_log, cl.recording_file
+        FROM `tabMaqsam Call Log` cl
+        WHERE cl.recording_file IS NOT NULL
+          AND cl.recording_file != ''
+          AND cl.timestamp < %s
+        """,
+        (cutoff,),
+        as_dict=True,
+    )
+    deleted = 0
+    for row in candidates:
+        file_name = frappe.db.get_value("File", {"file_url": row.recording_file}, "name")
+        if file_name:
+            try:
+                frappe.delete_doc("File", file_name, ignore_permissions=True, force=True)
+                deleted += 1
+            except Exception:
+                frappe.log_error(
+                    title="Maqsam Recording Cleanup",
+                    message=f"Failed to delete File {file_name} for {row.call_log}",
+                )
+                continue
+
+        frappe.db.set_value(
+            "Maqsam Call Log",
+            row.call_log,
+            {
+                "recording_file": None,
+                "recording_file_size": 0,
+                "recording_content_type": None,
+                "recording_fetched_at": None,
+            },
+            update_modified=False,
+        )
+
+    frappe.db.commit()
+    return {"ok": True, "cutoff": cutoff, "deleted": deleted, "scanned": len(candidates)}
 
 
 def maqsam_auto_sync_recent_calls() -> dict[str, Any]:

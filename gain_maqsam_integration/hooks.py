@@ -31,5 +31,6 @@ scheduler_events = {
 	},
 	"daily": [
 		"gain_maqsam_integration.api.maqsam_trim_old_payloads",
+		"gain_maqsam_integration.api.maqsam_cleanup_old_recordings",
 	],
 }
