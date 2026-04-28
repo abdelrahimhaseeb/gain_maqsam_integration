@@ -479,34 +479,17 @@ def maqsam_receive_call_event() -> dict[str, Any]:
     try:
         log_name, created = upsert_maqsam_call(call)
         frappe.db.commit()
-
-        profile_phone = _get_customer_phone_from_call(call)
-        profile = get_caller_profile(phone=profile_phone) if profile_phone else {}
-        settings = _get_maqsam_settings()
         agent_email = _extract_agent_email(payload, call)
-        target_user = _resolve_user_from_email(agent_email)
 
-        if not target_user and settings:
-            target_user = _resolve_user_from_email(cstr(settings.get("default_agent_email")))
-
-        target_users: list[str] = []
-        if target_user:
-            target_users = [target_user]
-        elif settings and settings.get("enable_incoming_call_popup"):
-            target_users = _get_broadcast_users()
-
-        popup_sent = False
-        if settings and settings.get("enable_incoming_call_popup") and target_users:
-            event_data = {
-                "call_log": log_name,
-                "maqsam_call_id": call.get("id"),
-                "agent_email": agent_email,
-                "state": cstr(call.get("state") or "ringing"),
-                "profile": profile,
-            }
-            for user in target_users:
-                frappe.publish_realtime("maqsam_incoming_call", event_data, user=user)
-            popup_sent = True
+        frappe.enqueue(
+            "gain_maqsam_integration.api._dispatch_incoming_call_popup",
+            queue="short",
+            now=False,
+            enqueue_after_commit=True,
+            log_name=log_name,
+            call=call,
+            agent_email=agent_email,
+        )
     finally:
         frappe.set_user(original_user)
         frappe.local.message_log = []
@@ -515,10 +498,39 @@ def maqsam_receive_call_event() -> dict[str, Any]:
         "ok": True,
         "call_log": log_name,
         "created": created,
-        "popup_sent": popup_sent,
-        "target_user": target_user,
-        "broadcast_count": len(target_users),
+        "queued": True,
     }
+
+
+def _dispatch_incoming_call_popup(log_name: str, call: dict[str, Any], agent_email: str) -> None:
+    """Resolve the caller profile and publish the realtime popup event.
+
+    Runs asynchronously so the webhook can return immediately.
+    """
+    settings = _get_maqsam_settings()
+    if not settings or not settings.get("enable_incoming_call_popup"):
+        return
+
+    profile_phone = _get_customer_phone_from_call(call)
+    profile = get_caller_profile(phone=profile_phone) if profile_phone else {}
+
+    target_user = _resolve_user_from_email(agent_email)
+    if not target_user:
+        target_user = _resolve_user_from_email(cstr(settings.get("default_agent_email")))
+
+    target_users = [target_user] if target_user else _get_broadcast_users()
+    if not target_users:
+        return
+
+    event_data = {
+        "call_log": log_name,
+        "maqsam_call_id": call.get("id"),
+        "agent_email": agent_email,
+        "state": cstr(call.get("state") or "ringing"),
+        "profile": profile,
+    }
+    for user in target_users:
+        frappe.publish_realtime("maqsam_incoming_call", event_data, user=user)
 
 
 @frappe.whitelist()
@@ -673,6 +685,27 @@ def maqsam_sync_recent_calls(page: int = 1) -> dict[str, Any]:
         frappe.throw("Maqsam integration is disabled.")
 
     return _sync_recent_calls_page(page=int(page))
+
+
+def maqsam_trim_old_payloads(days: int = 90) -> dict[str, Any]:
+    """Clear raw_payload on call logs older than `days` to keep the table light.
+
+    Wired to the daily scheduler. The structured fields (state, duration,
+    caller_number, ...) remain untouched, only the verbatim JSON blob is dropped.
+    """
+    cutoff = frappe.utils.add_days(frappe.utils.today(), -int(days))
+    affected = frappe.db.sql(
+        """
+        UPDATE `tabMaqsam Call Log`
+        SET raw_payload = NULL
+        WHERE raw_payload IS NOT NULL
+          AND raw_payload != ''
+          AND timestamp < %s
+        """,
+        (cutoff,),
+    )
+    frappe.db.commit()
+    return {"ok": True, "cutoff": cutoff, "rows_affected": frappe.db.sql("SELECT ROW_COUNT()")[0][0]}
 
 
 def maqsam_auto_sync_recent_calls() -> dict[str, Any]:

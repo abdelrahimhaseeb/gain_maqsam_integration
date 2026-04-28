@@ -252,23 +252,33 @@ def upsert_maqsam_call(call: dict[str, Any]) -> tuple[str | None, bool]:
         return None, False
 
     values = _build_values_from_maqsam_call(call)
-    existing = frappe.db.exists(CALL_LOG_DOCTYPE, {"maqsam_call_id": maqsam_call_id})
-    created = not bool(existing)
-    doc = frappe.get_doc(CALL_LOG_DOCTYPE, existing) if existing else frappe.new_doc(CALL_LOG_DOCTYPE)
 
-    if not created and doc.source == CLICK_TO_CALL_SOURCE:
-        values.pop("source", None)
+    for attempt in range(2):
+        existing = frappe.db.exists(CALL_LOG_DOCTYPE, {"maqsam_call_id": maqsam_call_id})
+        created = not bool(existing)
+        doc = frappe.get_doc(CALL_LOG_DOCTYPE, existing) if existing else frappe.new_doc(CALL_LOG_DOCTYPE)
 
-    if doc.outcome:
-        values.pop("outcome", None)
+        if not created and doc.source == CLICK_TO_CALL_SOURCE:
+            values.pop("source", None)
 
-    doc.update(values)
-    if created:
-        doc.insert(ignore_permissions=True)
-    else:
-        doc.save(ignore_permissions=True)
+        if doc.outcome:
+            values.pop("outcome", None)
 
-    return doc.name, created
+        doc.update(values)
+        try:
+            if created:
+                doc.insert(ignore_permissions=True)
+            else:
+                doc.save(ignore_permissions=True)
+            return doc.name, created
+        except frappe.UniqueValidationError:
+            if attempt == 0:
+                # A concurrent webhook inserted the same call_id between our
+                # exists() check and insert(). Retry once and treat as update.
+                continue
+            raise
+
+    return None, False
 
 
 def sync_recent_calls(calls: list[dict[str, Any]]) -> dict[str, Any]:

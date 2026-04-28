@@ -114,7 +114,8 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Maqsam Call ID",
-   "search_index": 1
+   "search_index": 1,
+   "unique": 1
   },
   {
    "fieldname": "timestamp",

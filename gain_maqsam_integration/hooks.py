@@ -29,4 +29,7 @@ scheduler_events = {
 			"gain_maqsam_integration.api.maqsam_auto_sync_recent_calls",
 		],
 	},
+	"daily": [
+		"gain_maqsam_integration.api.maqsam_trim_old_payloads",
+	],
 }
