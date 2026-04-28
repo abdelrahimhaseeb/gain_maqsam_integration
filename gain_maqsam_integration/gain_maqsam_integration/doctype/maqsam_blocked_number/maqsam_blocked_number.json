@@ -1,0 +1,80 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "autoname": "field:phone_digits",
+ "creation": "2026-04-28 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "phone_digits",
+  "label",
+  "reason",
+  "tagged_by_call_log"
+ ],
+ "fields": [
+  {
+   "fieldname": "phone_digits",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Phone (digits only)",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Label",
+   "options": "Wrong Number\nSpam\nBlocked",
+   "default": "Wrong Number",
+   "reqd": 1
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "tagged_by_call_log",
+   "fieldtype": "Link",
+   "label": "First tagged from",
+   "options": "Maqsam Call Log",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-04-28 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Gain Maqsam Integration",
+ "name": "Maqsam Blocked Number",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maqsam Agent",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

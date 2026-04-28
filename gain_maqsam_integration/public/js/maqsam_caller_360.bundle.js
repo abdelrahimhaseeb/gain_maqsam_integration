@@ -250,6 +250,13 @@
 				<a class="m360-btn ghost" href="${callLogHref}">📝 ${__("Call Log")}</a>
 			</div>
 
+			${ctx.callLog ? `
+				<div class="m360-tag-row">
+					<button type="button" class="m360-tag" data-tag="Wrong Number">🚫 ${__("Wrong Number")}</button>
+					<button type="button" class="m360-tag" data-tag="Spam">⛔ ${__("Spam")}</button>
+				</div>
+			` : ""}
+
 			<section class="m360-section">
 				<h4>${__("Matched Records")}${matches.length > 1 ? ` <span class="m360-count">${matches.length}</span>` : ""}</h4>
 				${renderMatches(matches, primary)}
@@ -333,6 +340,9 @@
 			.m360-subtitle { margin: 8px 0 4px; color: #334155; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
 			.m360-row.compact { padding: 6px 0; }
 			.m360-link { display: block; padding: 8px 0 0; text-align: center; font-size: 12px; color: #0f766e; font-weight: 600; }
+			.m360-tag-row { display: flex; gap: 6px; margin-bottom: 12px; }
+			.m360-tag { flex: 1; padding: 6px 8px; border-radius: 8px; border: 1px solid #fecaca; background: #fff; color: #991b1b; font-size: 11px; font-weight: 600; cursor: pointer; transition: all .15s; }
+			.m360-tag:hover { background: #fee2e2; border-color: #fca5a5; }
 			[dir="rtl"] .m360-drawer { animation-name: m360-slide-in-rtl; }
 			@keyframes m360-slide-in-rtl { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
 		`;
@@ -350,7 +360,43 @@
 		return setInterval(tick, 1000);
 	}
 
+	let activeRingtone = null;
+
+	function stopRingtone() {
+		if (!activeRingtone) return;
+		try {
+			activeRingtone.oscillator.stop();
+			activeRingtone.context.close();
+		} catch (_) {}
+		activeRingtone = null;
+	}
+
+	function startRingtone() {
+		stopRingtone();
+		try {
+			const Ctx = window.AudioContext || window.webkitAudioContext;
+			if (!Ctx) return;
+			const context = new Ctx();
+			const oscillator = context.createOscillator();
+			const gain = context.createGain();
+			oscillator.type = "sine";
+			oscillator.frequency.value = 660;
+			gain.gain.value = 0;
+			oscillator.connect(gain);
+			gain.connect(context.destination);
+			oscillator.start();
+			let on = true;
+			const beat = setInterval(() => {
+				gain.gain.setTargetAtTime(on ? 0.08 : 0, context.currentTime, 0.02);
+				on = !on;
+			}, 500);
+			activeRingtone = { context, oscillator, beat };
+			setTimeout(stopRingtone, 12000);
+		} catch (_) {}
+	}
+
 	function closeDrawer(drawer, timerId) {
+		stopRingtone();
 		if (!drawer || !drawer.parentNode) return;
 		clearInterval(timerId);
 		drawer.classList.add("closing");
@@ -374,6 +420,7 @@
 			if (fresh) stateEl.replaceWith(fresh);
 		}
 		const key = String(state || "").toLowerCase().replace(/[\s-]/g, "_");
+		if (key !== "ringing") stopRingtone();
 		if (TERMINAL_STATES.has(key)) {
 			clearTimeout(autoCloseId);
 			autoCloseId = setTimeout(() => {
@@ -401,6 +448,24 @@
 		const timerId = timerEl ? startTimer(timerEl) : null;
 
 		drawer.querySelector("[data-close]")?.addEventListener("click", () => closeDrawer(drawer, timerId));
+
+		drawer.querySelectorAll("[data-tag]").forEach((btn) => {
+			btn.addEventListener("click", async () => {
+				if (!ctx.callLog) return;
+				const label = btn.dataset.tag;
+				btn.disabled = true;
+				try {
+					await frappe.call({
+						method: "gain_maqsam_integration.api.maqsam_tag_call",
+						args: { call_log: ctx.callLog, label },
+					});
+					frappe.show_alert({ message: __("Marked as {0}", [label]), indicator: "orange" });
+					closeDrawer(drawer, timerId);
+				} catch (e) {
+					btn.disabled = false;
+				}
+			});
+		});
 
 		drawer.querySelectorAll("[data-new-doc]").forEach((btn) => {
 			btn.addEventListener("click", () => {
@@ -463,6 +528,16 @@
 		activeDrawer = drawer;
 		activeTimer = timerId;
 		activeCallId = ctx.callLog || null;
+
+		if ((ctx.state || "ringing") === "ringing") startRingtone();
+
+		const escHandler = (event) => {
+			if (event.key !== "Escape" || !activeDrawer) return;
+			closeDrawer(drawer, timerId);
+			document.removeEventListener("keydown", escHandler);
+		};
+		document.addEventListener("keydown", escHandler);
+
 		return drawer;
 	}
 

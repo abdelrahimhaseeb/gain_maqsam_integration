@@ -502,16 +502,30 @@ def maqsam_receive_call_event() -> dict[str, Any]:
     }
 
 
+def _is_blocked(phone: str) -> bool:
+    if not phone:
+        return False
+    digits = re.sub(r"\D", "", str(phone))
+    if not digits:
+        return False
+    return bool(frappe.db.exists("Maqsam Blocked Number", digits))
+
+
 def _dispatch_incoming_call_popup(log_name: str, call: dict[str, Any], agent_email: str) -> None:
     """Resolve the caller profile and publish the realtime popup event.
 
-    Runs asynchronously so the webhook can return immediately.
+    Runs asynchronously so the webhook can return immediately. Tagged numbers
+    (Wrong Number / Spam / Blocked) skip the popup but the call log is still
+    saved for reporting.
     """
     settings = _get_maqsam_settings()
     if not settings or not settings.get("enable_incoming_call_popup"):
         return
 
     profile_phone = _get_customer_phone_from_call(call)
+    if _is_blocked(profile_phone):
+        return
+
     profile = get_caller_profile(phone=profile_phone) if profile_phone else {}
 
     target_user = _resolve_user_from_email(agent_email)
@@ -531,6 +545,42 @@ def _dispatch_incoming_call_popup(log_name: str, call: dict[str, Any], agent_ema
     }
     for user in target_users:
         frappe.publish_realtime("maqsam_incoming_call", event_data, user=user)
+
+
+@frappe.whitelist()
+def maqsam_tag_call(call_log: str, label: str, reason: str | None = None) -> dict[str, Any]:
+    """Tag a call log as Wrong Number / Spam and add the caller to the block list.
+
+    Future incoming calls from the same digits will set outcome but skip the
+    realtime popup.
+    """
+    _only_logged_in_user()
+    allowed = {"Wrong Number", "Spam", "Blocked"}
+    if label not in allowed:
+        frappe.throw(f"Label must be one of: {', '.join(sorted(allowed))}")
+
+    doc = frappe.get_doc("Maqsam Call Log", call_log)
+    doc.check_permission("write")
+    doc.outcome = "Wrong Number" if label == "Wrong Number" else "Other"
+    note_line = f"[{label}] {cstr(reason).strip()}".strip()
+    doc.notes = "\n".join(filter(None, [doc.notes, note_line]))
+    doc.save()
+
+    customer_phone = doc.caller_number if doc.direction == "inbound" else doc.callee_number
+    digits = re.sub(r"\D", "", cstr(customer_phone))
+    if digits and not frappe.db.exists("Maqsam Blocked Number", digits):
+        frappe.get_doc(
+            {
+                "doctype": "Maqsam Blocked Number",
+                "phone_digits": digits,
+                "label": label,
+                "reason": cstr(reason).strip() or None,
+                "tagged_by_call_log": doc.name,
+            }
+        ).insert(ignore_permissions=True)
+
+    frappe.db.commit()
+    return {"ok": True, "call_log": doc.name, "blocked": digits or None, "label": label}
 
 
 @frappe.whitelist()
