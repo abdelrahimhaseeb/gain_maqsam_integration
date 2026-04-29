@@ -529,7 +529,9 @@
 		activeTimer = timerId;
 		activeCallId = ctx.callLog || null;
 
-		if ((ctx.state || "ringing") === "ringing") startRingtone();
+		// Only ring when this is an active inbound call event — manual opens
+		// (clicking "Caller Profile" on a saved call log) must stay silent.
+		if (ctx.state === "ringing") startRingtone();
 
 		const escHandler = (event) => {
 			if (event.key !== "Escape" || !activeDrawer) return;
