@@ -1,0 +1,21 @@
+{
+ "content": null,
+ "creation": "2026-04-29 00:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "icon": "phone-call",
+ "idx": 0,
+ "modified": "2026-04-29 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Gain Maqsam Integration",
+ "name": "maqsam-dialer",
+ "owner": "Administrator",
+ "page_name": "maqsam-dialer",
+ "roles": [
+  { "role": "System Manager" },
+  { "role": "Maqsam Agent" }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Maqsam Dialer"
+}

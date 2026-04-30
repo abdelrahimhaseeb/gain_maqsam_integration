@@ -5,7 +5,7 @@
   { "chart_name": "Maqsam Outcomes Distribution", "label": "Maqsam Outcomes Distribution" },
   { "chart_name": "Maqsam Inbound vs Outbound", "label": "Maqsam Inbound vs Outbound" }
  ],
- "content": "[{\"id\":\"maqsam_calls_chart\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Maqsam Calls Daily\",\"col\":12}},{\"id\":\"total_calls_today_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Total Calls Today\",\"col\":3}},{\"id\":\"outbound_today_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Outbound Today\",\"col\":3}},{\"id\":\"missed_no_answer_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Missed / No Answer\",\"col\":3}},{\"id\":\"follow_ups_due_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Follow-ups Due\",\"col\":3}},{\"id\":\"outcomes_chart\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Maqsam Outcomes Distribution\",\"col\":6}},{\"id\":\"direction_chart\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Maqsam Inbound vs Outbound\",\"col\":6}},{\"id\":\"caller_profile_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Caller Profile\",\"col\":3}},{\"id\":\"maqsam_settings_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maqsam Settings\",\"col\":3}},{\"id\":\"maqsam_call_log_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maqsam Call Log\",\"col\":3}},{\"id\":\"patient_appointment_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Patient Appointment\",\"col\":3}},{\"id\":\"patient_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Patient\",\"col\":3}},{\"id\":\"customer_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Customer\",\"col\":3}},{\"id\":\"workspace_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"reports_paragraph\",\"type\":\"paragraph\",\"data\":{\"text\":\"Reports\",\"col\":12}},{\"id\":\"reports_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"call_center_paragraph\",\"type\":\"paragraph\",\"data\":{\"text\":\"Call Center\",\"col\":12}},{\"id\":\"maqsam_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Maqsam\",\"col\":4}},{\"id\":\"sales_contacts_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Sales Contacts\",\"col\":4}},{\"id\":\"healthcare_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Healthcare\",\"col\":4}}]",
+ "content": "[{\"id\":\"maqsam_calls_chart\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Maqsam Calls Daily\",\"col\":12}},{\"id\":\"total_calls_today_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Total Calls Today\",\"col\":3}},{\"id\":\"outbound_today_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Outbound Today\",\"col\":3}},{\"id\":\"missed_no_answer_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Missed / No Answer\",\"col\":3}},{\"id\":\"follow_ups_due_card\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Follow-ups Due\",\"col\":3}},{\"id\":\"outcomes_chart\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Maqsam Outcomes Distribution\",\"col\":6}},{\"id\":\"direction_chart\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Maqsam Inbound vs Outbound\",\"col\":6}},{\"id\":\"maqsam_dialer_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maqsam Dialer\",\"col\":3}},{\"id\":\"caller_profile_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Caller Profile\",\"col\":3}},{\"id\":\"maqsam_settings_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maqsam Settings\",\"col\":3}},{\"id\":\"maqsam_call_log_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Maqsam Call Log\",\"col\":3}},{\"id\":\"patient_appointment_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Patient Appointment\",\"col\":3}},{\"id\":\"patient_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Patient\",\"col\":3}},{\"id\":\"customer_shortcut\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Customer\",\"col\":3}},{\"id\":\"workspace_spacer\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"reports_paragraph\",\"type\":\"paragraph\",\"data\":{\"text\":\"Reports\",\"col\":12}},{\"id\":\"reports_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports\",\"col\":4}},{\"id\":\"call_center_paragraph\",\"type\":\"paragraph\",\"data\":{\"text\":\"Call Center\",\"col\":12}},{\"id\":\"maqsam_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Maqsam\",\"col\":4}},{\"id\":\"sales_contacts_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Sales Contacts\",\"col\":4}},{\"id\":\"healthcare_card\",\"type\":\"card\",\"data\":{\"card_name\":\"Healthcare\",\"col\":4}}]",
  "custom_blocks": [],
  "docstatus": 0,
  "doctype": "Workspace",
@@ -84,9 +84,20 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Maqsam",
-   "link_count": 3,
+   "link_count": 4,
    "onboard": 0,
    "type": "Card Break"
+  },
+  {
+   "dependencies": "",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Maqsam Dialer",
+   "link_count": 0,
+   "link_to": "maqsam-dialer",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
   },
   {
    "dependencies": "",
@@ -209,6 +220,14 @@
  "roles": [],
  "sequence_id": 30.0,
  "shortcuts": [
+  {
+   "color": "Green",
+   "doc_view": "",
+   "label": "Maqsam Dialer",
+   "link_to": "maqsam-dialer",
+   "stats_filter": "[]",
+   "type": "Page"
+  },
   {
    "color": "Purple",
    "doc_view": "",
