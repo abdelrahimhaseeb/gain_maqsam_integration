@@ -1051,11 +1051,18 @@
 			if (!phone) return;
 			button.prop("disabled", true).text(__("Calling..."));
 			try {
-				await frappe.xcall("gain_maqsam_integration.api.maqsam_create_click_to_call", {
+				const dialer = window.gain_maqsam?.dialer;
+				if (dialer?.open) await dialer.open();
+				const response = await frappe.xcall("gain_maqsam_integration.api.maqsam_create_click_to_call", {
 					phone: String(phone),
 					doctype: doc.linked_doctype || null,
 					docname: doc.linked_docname || null,
 				});
+				const newCallLog = response?.call_log;
+				if (dialer?.setBusy && newCallLog) {
+					dialer.setBusy(newCallLog);
+					setTimeout(() => dialer.clearBusy?.(newCallLog), 5 * 60 * 1000);
+				}
 				frappe.show_alert({ message: __("Call placed via Maqsam"), indicator: "green" });
 			} catch (error) {
 				frappe.show_alert({ message: error.message || __("Could not place call"), indicator: "red" });

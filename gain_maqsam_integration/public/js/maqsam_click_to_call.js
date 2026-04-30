@@ -116,6 +116,18 @@
 	}
 
 	async function openMaqsamAutoLogin(continuePath = "/phone/dialer") {
+		// Prefer the embedded floating dialer so the agent stays in the desk and
+		// the outbound call lands in the same dialer the system is showing.
+		const embedded = window.gain_maqsam?.dialer;
+		if (embedded?.open) {
+			try {
+				await embedded.open();
+				return;
+			} catch (error) {
+				// Fall through to the standalone-window fallback below.
+			}
+		}
+
 		const dialerWindow = openPendingDialerWindow();
 		try {
 			const url = await getMaqsamAutoLoginUrl(continuePath);
@@ -254,7 +266,13 @@
 
 					dialog.hide();
 					frappe.show_alert({ message: __("Call request sent to Maqsam and dialer opened."), indicator: "green" });
-					openOutcomeDialog(callResponse.message?.call_log);
+					const callLog = callResponse.message?.call_log;
+					const dialer = window.gain_maqsam?.dialer;
+					if (dialer?.setBusy && callLog) {
+						dialer.setBusy(callLog);
+						setTimeout(() => dialer.clearBusy?.(callLog), 5 * 60 * 1000);
+					}
+					openOutcomeDialog(callLog);
 				} catch (error) {
 					throw error;
 				}
