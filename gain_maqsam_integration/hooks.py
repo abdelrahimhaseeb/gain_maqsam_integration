@@ -13,17 +13,17 @@ app_include_js = [
 ]
 
 doctype_js = {
-	"Maqsam Settings": "public/js/maqsam_settings.js",
-	"Maqsam Call Log": "public/js/maqsam_call_log.js",
-	"Lead": "public/js/maqsam_click_to_call.js",
-	"Contact": "public/js/maqsam_click_to_call.js",
-	"Customer": "public/js/maqsam_click_to_call.js",
-	"Patient": "public/js/maqsam_click_to_call.js",
-	"Patient Appointment": "public/js/maqsam_click_to_call.js",
+	"Maqsam Settings": "public/js/maqsam_settings.bundle.js",
+	"Maqsam Call Log": "public/js/maqsam_call_log.bundle.js",
+	"Lead": "public/js/maqsam_click_to_call.bundle.js",
+	"Contact": "public/js/maqsam_click_to_call.bundle.js",
+	"Customer": "public/js/maqsam_click_to_call.bundle.js",
+	"Patient": "public/js/maqsam_click_to_call.bundle.js",
+	"Patient Appointment": "public/js/maqsam_click_to_call.bundle.js",
 }
 
 doctype_list_js = {
-	"Maqsam Call Log": "public/js/maqsam_call_log_list.js",
+	"Maqsam Call Log": "public/js/maqsam_call_log_list.bundle.js",
 }
 
 override_doctype_dashboards = {

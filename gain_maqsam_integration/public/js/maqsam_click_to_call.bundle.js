@@ -231,14 +231,16 @@
 			],
 			primary_action_label: __("Start Call"),
 			primary_action: async (values) => {
-				const dialerWindow = openPendingDialerWindow();
+				const dialer = window.gain_maqsam?.dialer;
+				let dialerWindow = null;
 				try {
-					const dialerUrl = await getMaqsamAutoLoginUrl("/phone/dialer");
-
-					if (dialerWindow) {
-						dialerWindow.location.href = dialerUrl;
+					if (dialer?.open) {
+						await dialer.open();
 					} else {
-						window.open(dialerUrl, "_blank", "noopener,noreferrer");
+						dialerWindow = openPendingDialerWindow();
+						const dialerUrl = await getMaqsamAutoLoginUrl("/phone/dialer");
+						if (dialerWindow) dialerWindow.location.href = dialerUrl;
+						else window.open(dialerUrl, "_blank", "noopener,noreferrer");
 					}
 
 					frappe.show_alert({
