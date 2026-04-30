@@ -69,7 +69,11 @@
 		if (!force && cachedUrl && now - urlFetchedAt < URL_TTL_MS) {
 			return cachedUrl;
 		}
-		const response = await frappe.xcall("gain_maqsam_integration.api.maqsam_get_autologin_url");
+		// Land directly on Maqsam's phone dialer view, not the default
+		// account dashboard / call history.
+		const response = await frappe.xcall("gain_maqsam_integration.api.maqsam_get_autologin_url", {
+			continue_path: "/phone/dialer",
+		});
 		cachedUrl = response?.url || "";
 		urlFetchedAt = now;
 		return cachedUrl;
