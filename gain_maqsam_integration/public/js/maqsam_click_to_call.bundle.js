@@ -44,15 +44,25 @@
 
 	function buildAgentStatusHtml(defaults) {
 		const status = defaults.agent_status || {};
-		const portalUrl = defaults.portal_url;
 		const isReady = Boolean(status.can_make_outbound_calls);
 		const badgeColor = isReady ? "#166534" : "#991b1b";
 		const badgeBg = isReady ? "#dcfce7" : "#fee2e2";
 		const messageColor = isReady ? "#166534" : "#7f1d1d";
 		const stateText = status.state ? escapeHtml(status.state) : __("unknown");
-		const linkHtml = portalUrl
-			? `<a href="${escapeHtml(portalUrl)}" target="_blank" rel="noreferrer">${__("Open Maqsam Portal")}</a>`
-			: "";
+
+		const helper = isReady
+			? ""
+			: `
+				<div style="margin-top:10px; padding-top:10px; border-top:1px dashed ${isReady ? "#bbf7d0" : "#fecaca"}; font-size:12px;">
+					<strong>${__("How to fix")}:</strong>
+					<ol style="margin:6px 0 0; padding-inline-start:20px; line-height:1.6;">
+						<li>${__("Click the green {0} button at the bottom-right (or press {1}).", ["📞", "<kbd>Alt+D</kbd>"])}</li>
+						<li>${__("Inside the Maqsam dialer, change your status to {0}.", ["<strong>Online</strong> / <strong>Available</strong>"])}</li>
+						<li>${__("Come back here and press Start Call again.")}</li>
+					</ol>
+					<button type="button" class="btn btn-xs btn-primary" style="margin-top:8px;" data-open-embedded-dialer>📞 ${__("Open Embedded Dialer Now")}</button>
+				</div>
+			`;
 
 		return `
 			<div style="border:1px solid ${isReady ? "#bbf7d0" : "#fecaca"}; background:${isReady ? "#f0fdf4" : "#fef2f2"}; color:${messageColor}; border-radius:10px; padding:12px 14px; margin-top:4px;">
@@ -65,7 +75,7 @@
 				<div style="font-size:13px; line-height:1.5;">
 					${escapeHtml(status.message || "")}
 				</div>
-				${linkHtml ? `<div style="margin-top:8px; font-size:13px;">${linkHtml}</div>` : ""}
+				${helper}
 			</div>
 		`;
 	}
@@ -282,6 +292,18 @@
 		});
 
 		dialog.show();
+
+		// Wire the "Open Embedded Dialer Now" button inside the agent-status banner
+		dialog.$wrapper.on("click", "[data-open-embedded-dialer]", async () => {
+			const dialer = window.gain_maqsam?.dialer;
+			if (dialer?.open) {
+				await dialer.open();
+				frappe.show_alert({
+					message: __("Dialer opened — set your status to Online inside Maqsam, then try Start Call again."),
+					indicator: "blue",
+				});
+			}
+		});
 	}
 
 	function openOutcomeDialog(callLog) {
