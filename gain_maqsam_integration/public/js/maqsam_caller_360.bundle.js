@@ -246,6 +246,11 @@
 				</div>
 			</div>
 
+			<div class="m360-answer-hint">
+				${__("Answer this call from the Maqsam dialer")} →
+				<button type="button" class="m360-btn primary" data-open-dialer>📞 ${__("Open Dialer")}</button>
+			</div>
+
 			<div class="m360-actions">${renderActions(profile)}
 				<a class="m360-btn ghost" href="${callLogHref}">📝 ${__("Call Log")}</a>
 			</div>
@@ -300,6 +305,8 @@
 			.m360-name { font-size: 18px; font-weight: 800; line-height: 1.2; }
 			.m360-phone { color: #475569; font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
 			.m360-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+			.m360-answer-hint { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; margin-bottom: 12px; background: linear-gradient(135deg, #ecfeff, #f0fdfa); border: 1px solid #99f6e4; border-radius: 10px; font-size: 12px; color: #0f766e; font-weight: 600; }
+			.m360-answer-hint .m360-btn { padding: 6px 10px; font-size: 12px; }
 			.m360-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
 			.m360-actions .m360-btn:first-child:nth-last-child(odd) { grid-column: 1 / -1; }
 			.m360-btn { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 12px; border-radius: 10px; border: 1px solid #e5e7eb; background: #fff; color: #0f172a; font-weight: 600; text-decoration: none; cursor: pointer; transition: all .15s; font-size: 13px; }
@@ -448,6 +455,11 @@
 		const timerId = timerEl ? startTimer(timerEl) : null;
 
 		drawer.querySelector("[data-close]")?.addEventListener("click", () => closeDrawer(drawer, timerId));
+
+		drawer.querySelector("[data-open-dialer]")?.addEventListener("click", async () => {
+			const dialer = window.gain_maqsam?.dialer;
+			if (dialer?.open) await dialer.open();
+		});
 
 		drawer.querySelectorAll("[data-tag]").forEach((btn) => {
 			btn.addEventListener("click", async () => {

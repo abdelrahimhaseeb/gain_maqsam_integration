@@ -40,8 +40,9 @@
 			.mfd-fab.busy { background: #dc2626; animation: mfd-pulse 1.2s infinite; box-shadow: 0 8px 22px rgba(220, 38, 38, .45); }
 			.mfd-fab.hidden { display: none !important; }
 			@keyframes mfd-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
-			.mfd-window { position: fixed; bottom: 90px; inset-inline-end: 24px; width: 380px; height: 560px; max-width: calc(100vw - 32px); max-height: calc(100vh - 130px); background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; box-shadow: 0 24px 48px rgba(15,23,42,.18), 0 4px 12px rgba(15,23,42,.08); z-index: 1041; display: flex; flex-direction: column; overflow: hidden; }
+			.mfd-window { position: fixed; bottom: 90px; inset-inline-end: 24px; width: 380px; height: 560px; max-width: calc(100vw - 32px); max-height: calc(100vh - 130px); background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; box-shadow: 0 24px 48px rgba(15,23,42,.18), 0 4px 12px rgba(15,23,42,.08); z-index: 1041; display: flex; flex-direction: column; overflow: hidden; transition: inset-inline-end .25s ease, inset-inline-start .25s ease; }
 			.mfd-window.hidden { display: none; }
+			.mfd-window.beside-drawer { inset-inline-end: auto; inset-inline-start: 24px; }
 			.mfd-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #f1f5f9; background: #fafbfc; cursor: move; user-select: none; }
 			.mfd-title { font-weight: 700; font-size: 13px; color: #0f172a; display: flex; align-items: center; gap: 8px; min-width: 0; }
 			.mfd-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; flex-shrink: 0; }
@@ -158,9 +159,18 @@
 		drawerObserver = new MutationObserver(() => {
 			if (!elements) return;
 			const drawerOpen = !!document.querySelector(".m360-drawer:not(.closing)");
-			if (drawerOpen && !elements.win.classList.contains("hidden")) {
-				// Drawer just opened — collapse mini-window so they don't overlap.
-				api.close();
+			if (drawerOpen) {
+				// An incoming-call drawer just appeared. The agent needs the
+				// dialer NOW to answer the call — auto-open it on the opposite
+				// side of the screen so the two panels don't overlap. If the
+				// user manually dragged the window, leave their position alone.
+				const wasMoved = elements.win.style.left || elements.win.style.top;
+				if (!wasMoved) elements.win.classList.add("beside-drawer");
+				if (elements.win.classList.contains("hidden") && !hiddenForRoute()) {
+					api.open();
+				}
+			} else {
+				elements.win.classList.remove("beside-drawer");
 			}
 		});
 		drawerObserver.observe(document.body, { childList: true, subtree: false });
