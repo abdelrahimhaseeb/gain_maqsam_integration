@@ -1,4 +1,5 @@
 (() => {
+	const AGENT_ENABLED_KEY = "gain_maqsam_agent_enabled";
 	const STATUS_COLORS = {
 		available: "green",
 		busy: "orange",
@@ -42,6 +43,21 @@
 		});
 	}
 
+	function maqsamAgentEnabled() {
+		return Boolean(
+			window.gain_maqsam?.dialer?.isEnabled?.()
+			|| window.gain_maqsam?.isAgentEnabled?.()
+			|| localStorage.getItem(AGENT_ENABLED_KEY) === "1"
+		);
+	}
+
+	function markMaqsamAgentEnabled(enabled) {
+		localStorage.setItem(AGENT_ENABLED_KEY, enabled ? "1" : "0");
+		window.gain_maqsam = window.gain_maqsam || {};
+		window.gain_maqsam.agentEnabled = enabled;
+		window.dispatchEvent(new CustomEvent("maqsam_agent_availability_changed", { detail: { enabled } }));
+	}
+
 	function buildAgentStatusHtml(defaults) {
 		const status = defaults.agent_status || {};
 		const isReady = Boolean(status.can_make_outbound_calls);
@@ -53,14 +69,9 @@
 		const helper = isReady
 			? ""
 			: `
-				<div style="margin-top:10px; padding-top:10px; border-top:1px dashed ${isReady ? "#bbf7d0" : "#fecaca"}; font-size:12px;">
-					<strong>${__("How to fix")}:</strong>
-					<ol style="margin:6px 0 0; padding-inline-start:20px; line-height:1.6;">
-						<li>${__("Click the green {0} button at the bottom-right (or press {1}).", ["📞", "<kbd>Alt+D</kbd>"])}</li>
-						<li>${__("Inside the Maqsam dialer, change your status to {0}.", ["<strong>Online</strong> / <strong>Available</strong>"])}</li>
-						<li>${__("Come back here and press Start Call again.")}</li>
-					</ol>
-					<button type="button" class="btn btn-xs btn-primary" style="margin-top:8px;" data-open-embedded-dialer>📞 ${__("Open Embedded Dialer Now")}</button>
+				<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #fecaca; font-size:12px; line-height:1.5;">
+					<div>${__("Activate Maqsam, keep the dialer open, set your status to Online/Available, then start the call again.")}</div>
+					<button type="button" class="btn btn-xs btn-primary" style="margin-top:8px;" data-open-embedded-dialer>${__("Activate Maqsam")}</button>
 				</div>
 			`;
 
@@ -126,6 +137,7 @@
 	}
 
 	async function openMaqsamAutoLogin(continuePath = "/phone/dialer") {
+		markMaqsamAgentEnabled(true);
 		// Prefer the embedded floating dialer so the agent stays in the desk and
 		// the outbound call lands in the same dialer the system is showing.
 		const embedded = window.gain_maqsam?.dialer;
@@ -138,6 +150,24 @@
 			}
 		}
 
+		const dialerWindow = openPendingDialerWindow();
+		try {
+			const url = await getMaqsamAutoLoginUrl(continuePath);
+			if (dialerWindow) {
+				dialerWindow.location.href = url;
+			} else {
+				window.open(url, "_blank", "noopener,noreferrer");
+			}
+		} catch (error) {
+			if (dialerWindow && !dialerWindow.closed) {
+				dialerWindow.close();
+			}
+			throw error;
+		}
+	}
+
+	async function openMaqsamDirect(continuePath = "/phone/dialer") {
+		markMaqsamAgentEnabled(true);
 		const dialerWindow = openPendingDialerWindow();
 		try {
 			const url = await getMaqsamAutoLoginUrl(continuePath);
@@ -279,7 +309,6 @@
 					dialog.hide();
 					frappe.show_alert({ message: __("Call request sent to Maqsam and dialer opened."), indicator: "green" });
 					const callLog = callResponse.message?.call_log;
-					const dialer = window.gain_maqsam?.dialer;
 					if (dialer?.setBusy && callLog) {
 						dialer.setBusy(callLog);
 						setTimeout(() => dialer.clearBusy?.(callLog), 5 * 60 * 1000);
@@ -293,16 +322,18 @@
 
 		dialog.show();
 
-		// Wire the "Open Embedded Dialer Now" button inside the agent-status banner
+		// Wire the Activate Maqsam button inside the agent-status banner.
 		dialog.$wrapper.on("click", "[data-open-embedded-dialer]", async () => {
 			const dialer = window.gain_maqsam?.dialer;
-			if (dialer?.open) {
+			if (dialer?.activate) {
+				await dialer.activate();
+			} else if (dialer?.open) {
 				await dialer.open();
-				frappe.show_alert({
-					message: __("Dialer opened — set your status to Online inside Maqsam, then try Start Call again."),
-					indicator: "blue",
-				});
 			}
+			frappe.show_alert({
+				message: __("Maqsam activated — set your status to Online inside the dialer, then try Start Call again."),
+				indicator: "blue",
+			});
 		});
 	}
 
@@ -362,29 +393,42 @@
 			return;
 		}
 
-		let agentStatus = {};
-		if (frm.page?.set_secondary_action) {
-			frm.page.set_secondary_action(__("Maqsam"), () => openClickToCallDialog(frm), "phone-call");
-		}
+			if (frm.page?.set_secondary_action) {
+				frm.page.set_secondary_action(__("Call via Maqsam"), () => openClickToCallDialog(frm), "phone-call");
+			} else {
+				frm.add_custom_button(__("Call via Maqsam"), () => openClickToCallDialog(frm), __("Maqsam"));
+			}
 
-		frm.add_custom_button(__("Enable Calling Status"), () => openMaqsamAutoLogin("/phone/dialer"), __("Maqsam"));
-		frm.add_custom_button(__("Call Customer"), () => openClickToCallDialog(frm), __("Maqsam"));
-		frm.add_custom_button(__("Open Maqsam Home"), () => openMaqsamAutoLogin("/"), __("Maqsam"));
-		const statusButton = frm.add_custom_button(
-			__("Status: Loading"),
-			() => showAgentStatusDialog(agentStatus),
+			frm.add_custom_button(
+				__("Open Maqsam Direct"),
+				() => openMaqsamDirect("/phone/dialer"),
+				__("Maqsam")
+			);
+
+			const updateAvailabilityButton = (button) => {
+				const enabled = maqsamAgentEnabled();
+			button.text(enabled ? __("Deactivate Maqsam") : __("Activate Maqsam"));
+		};
+		const availabilityButton = frm.add_custom_button(
+			__("Activate Maqsam"),
+			async () => {
+				const dialer = window.gain_maqsam?.dialer;
+				if (dialer?.toggleAvailability) {
+					await dialer.toggleAvailability();
+					updateAvailabilityButton(availabilityButton);
+				} else {
+					markMaqsamAgentEnabled(true);
+					await openMaqsamAutoLogin("/phone/dialer");
+				}
+			},
 			__("Maqsam")
 		);
-
-		fetchAgentStatus({ silent: true })
-			.then((status) => {
-				agentStatus = status || {};
-				statusButton.text(__("Status: {0}", [formatStatus(agentStatus.state)]));
-			})
-			.catch((error) => {
-				console.error("Failed to load Maqsam agent status", error);
-				statusButton.text(__("Status: Unknown"));
-			});
+		updateAvailabilityButton(availabilityButton);
+		if (frm._maqsamAvailabilityListener) {
+			window.removeEventListener("maqsam_agent_availability_changed", frm._maqsamAvailabilityListener);
+		}
+		frm._maqsamAvailabilityListener = () => updateAvailabilityButton(availabilityButton);
+		window.addEventListener("maqsam_agent_availability_changed", frm._maqsamAvailabilityListener);
 	}
 
 	frappe.ui.form.on("Lead", {

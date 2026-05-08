@@ -80,6 +80,36 @@ class TestBlockedNumber(unittest.TestCase):
 
         publish_mock.assert_not_called()
 
+    def test_fast_notification_skips_blocked_caller(self):
+        # The fast/lite notification fires inline from the webhook hot path
+        # and must skip the popup for blocked numbers as strictly as the
+        # heavy dispatcher does — otherwise spam callers would still trigger
+        # ringtones, just with a skeleton drawer.
+        digits = "966500777111"
+        block = frappe.get_doc(
+            {
+                "doctype": "Maqsam Blocked Number",
+                "phone_digits": digits,
+                "label": "Blocked",
+            }
+        )
+        block.insert(ignore_permissions=True)
+        frappe.db.commit()
+        self.created_blocks.append(digits)
+
+        from gain_maqsam_integration.api import _publish_fast_notification
+
+        with patch(
+            "gain_maqsam_integration.api.frappe.publish_realtime"
+        ) as publish_mock:
+            _publish_fast_notification(
+                log_name="MCL-FAKE-LITE",
+                call={"id": "y", "direction": "inbound", "caller": "+" + digits},
+                agent_email="",
+            )
+
+        publish_mock.assert_not_called()
+
     def test_invalid_label_raises(self):
         with self.assertRaises(frappe.ValidationError):
             maqsam_tag_call(call_log="nonexistent", label="NotAnOption")

@@ -5,9 +5,11 @@ import unittest
 import frappe
 
 from gain_maqsam_integration.call_log import (
+    _clear_duplicate_maqsam_call_id_message,
     _parse_timestamp,
     extract_maqsam_call_id,
     infer_outcome,
+    sync_recent_calls,
     upsert_maqsam_call,
 )
 
@@ -102,3 +104,42 @@ class TestUpsertIdempotency(unittest.TestCase):
         name, created = upsert_maqsam_call({"id": "", "direction": "inbound"})
         self.assertIsNone(name)
         self.assertFalse(created)
+
+    def test_duplicate_unique_message_is_removed_from_message_log(self):
+        frappe.local.message_log = [
+            {"message": "Maqsam Call ID must be unique"},
+            {"message": "Keep this message"},
+        ]
+
+        _clear_duplicate_maqsam_call_id_message()
+
+        self.assertEqual(frappe.local.message_log, [{"message": "Keep this message"}])
+
+
+class TestSyncRecentCalls(unittest.TestCase):
+    def setUp(self):
+        self.call_id = f"test-sync-inbound-{frappe.generate_hash(length=8)}"
+        self.created_logs: list[str] = []
+
+    def tearDown(self):
+        for name in self.created_logs:
+            if frappe.db.exists("Maqsam Call Log", name):
+                frappe.delete_doc("Maqsam Call Log", name, force=True, ignore_permissions=True)
+        frappe.db.commit()
+
+    def test_created_inbound_calls_are_reported_for_popup_fallback(self):
+        result = sync_recent_calls([
+            {
+                "id": self.call_id,
+                "direction": "inbound",
+                "caller": "+966500000001",
+                "callee": "+966112223344",
+                "state": "serviced",
+                "timestamp": "2026-04-27 20:30:00",
+            }
+        ])
+        frappe.db.commit()
+        self.created_logs.extend(result["logs"])
+
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(result["created_inbound"][0]["log_name"], result["logs"][0])

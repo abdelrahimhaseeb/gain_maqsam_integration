@@ -1,7 +1,53 @@
+async function openMaqsamDirect(continuePath = "/phone/dialer") {
+	const dialerWindow = window.open("", "_blank");
+	if (dialerWindow?.document) {
+		dialerWindow.document.write(
+			`<html><head><title>${__("Opening Maqsam")}</title></head><body style="font-family: sans-serif; padding: 24px;">${__("Opening Maqsam...")}</body></html>`
+		);
+		dialerWindow.document.close();
+	}
+
+	try {
+		const response = await frappe.call({
+			method: "gain_maqsam_integration.api.maqsam_get_autologin_url",
+			args: { continue_path: continuePath },
+		});
+		const url = response.message?.url;
+		if (!url) {
+			frappe.throw(__("Maqsam auto-login URL was not generated."));
+		}
+		if (dialerWindow) {
+			dialerWindow.location.href = url;
+		} else {
+			window.open(url, "_blank", "noopener,noreferrer");
+		}
+	} catch (error) {
+		if (dialerWindow && !dialerWindow.closed) {
+			dialerWindow.close();
+		}
+		throw error;
+	}
+}
+
 frappe.ui.form.on("Maqsam Settings", {
 	refresh(frm) {
-		const webhookUrl = `${window.location.origin}/api/method/gain_maqsam_integration.api.maqsam_receive_call_event`;
-		frm.fields_dict.incoming_webhook_url?.set_input(webhookUrl);
+		const currentWebhookUrl = `${window.location.origin}/api/method/gain_maqsam_integration.api.maqsam_receive_call_event`;
+		const savedWebhookUrl = (frm.doc.incoming_webhook_url || "").trim();
+		if (!savedWebhookUrl && !frm.is_new()) {
+			frm.set_value("incoming_webhook_url", currentWebhookUrl);
+		} else if (savedWebhookUrl && savedWebhookUrl !== currentWebhookUrl) {
+			frm.set_intro(
+				__("Saved webhook URL does not match this site's current URL. Update it before copying the URL into Maqsam."),
+				"orange",
+			);
+			frm.add_custom_button(__("Use Current Webhook URL"), async () => {
+				await frm.set_value("incoming_webhook_url", currentWebhookUrl);
+				await frm.save();
+				frappe.show_alert({ message: __("Webhook URL updated."), indicator: "green" });
+			}, __("Webhook"));
+		} else {
+			frm.set_intro("");
+		}
 		frm.set_df_property(
 			"help_text",
 			"options",
@@ -13,10 +59,10 @@ frappe.ui.form.on("Maqsam Settings", {
 			].join(""),
 		);
 
-		frm.add_custom_button(__("Test Connection"), async () => {
-			const response = await frappe.call({
-				method: "gain_maqsam_integration.api.maqsam_test_connection",
-			});
+			frm.add_custom_button(__("Test Connection"), async () => {
+				const response = await frappe.call({
+					method: "gain_maqsam_integration.api.maqsam_test_connection",
+				});
 
 			const result = response.message || {};
 			frappe.msgprint({
@@ -27,11 +73,19 @@ frappe.ui.form.on("Maqsam Settings", {
 					<div><strong>Agents:</strong> ${result.agents_count ?? "-"}</div>
 					<div><strong>Contacts:</strong> ${result.contacts_count ?? "-"}</div>
 				`,
+				});
 			});
-		});
 
-		frm.add_custom_button(__("Sync Recent Calls"), async () => {
-			const response = await frappe.call({
+			frm.add_custom_button(__("Open Maqsam Dialer"), () => {
+				openMaqsamDirect("/phone/dialer");
+			}, __("Maqsam"));
+
+			frm.add_custom_button(__("Open Maqsam Portal"), () => {
+				openMaqsamDirect("/");
+			}, __("Maqsam"));
+
+			frm.add_custom_button(__("Sync Recent Calls"), async () => {
+				const response = await frappe.call({
 				method: "gain_maqsam_integration.api.maqsam_sync_recent_calls",
 				args: { page: 1 },
 			});
@@ -91,9 +145,9 @@ frappe.ui.form.on("Maqsam Settings", {
 			frappe.set_route("maqsam-caller-profile");
 		});
 
-		frm.add_custom_button(__("Copy Webhook URL"), () => {
-			frappe.utils.copy_to_clipboard(webhookUrl);
-			frappe.show_alert({ message: __("Webhook URL copied."), indicator: "green" });
-		});
+		frm.add_custom_button(__("Copy Current Webhook URL"), () => {
+			frappe.utils.copy_to_clipboard(currentWebhookUrl);
+			frappe.show_alert({ message: __("Current webhook URL copied."), indicator: "green" });
+		}, __("Webhook"));
 	},
 });

@@ -5,8 +5,11 @@ from typing import Any
 import frappe
 from frappe import _
 
+from gain_maqsam_integration.permissions import get_call_log_report_scope, only_maqsam_user
+
 
 def execute(filters: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    only_maqsam_user()
     filters = filters or {}
     return _columns(), _data(filters)
 
@@ -32,6 +35,10 @@ def _data(filters: dict[str, Any]) -> list[dict[str, Any]]:
 
     conditions = ["direction = 'inbound'", "outcome IN ('No Answer', 'Busy')", "timestamp >= %(since)s"]
     params: dict[str, Any] = {"since": since}
+    scope_condition, scope_params = get_call_log_report_scope()
+    if scope_condition:
+        conditions.append(scope_condition)
+        params.update(scope_params)
 
     if filters.get("agent_email"):
         conditions.append("agent_email = %(agent_email)s")

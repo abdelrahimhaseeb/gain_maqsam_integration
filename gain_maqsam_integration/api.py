@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import hmac
 import json
 import re
@@ -7,11 +9,8 @@ from typing import Any
 
 import frappe
 from frappe.rate_limiter import rate_limit
-from frappe.utils import cstr, now_datetime
+from frappe.utils import cint, cstr, get_datetime, now_datetime
 from frappe.utils.file_manager import save_file
-
-
-MAQSAM_AGENT_ROLE = "Maqsam Agent"
 
 from gain_maqsam_integration.call_log import (
     create_gain_call_log,
@@ -23,6 +22,13 @@ from gain_maqsam_integration.call_log import (
 )
 from gain_maqsam_integration.caller_profile import get_caller_profile
 from gain_maqsam_integration.maqsam_client import get_client
+from gain_maqsam_integration.permissions import (
+    MAQSAM_AGENT_ROLE,
+    can_access_call_log,
+    enforce_call_log_access,
+    is_maqsam_superuser,
+    only_maqsam_user,
+)
 
 
 CLICK_TO_CALL_FIELDS = {
@@ -33,6 +39,19 @@ CLICK_TO_CALL_FIELDS = {
     "Patient Appointment": ("mobile", "phone"),
 }
 
+CURRENT_CALL_LOOKBACK_MINUTES = 15
+TERMINAL_CALL_STATES = {
+    "ended",
+    "completed",
+    "answered",
+    "serviced",
+    "abandoned",
+    "dropped",
+    "no_answer",
+    "busy",
+    "failed",
+}
+
 
 def _only_system_manager() -> None:
     frappe.only_for("System Manager")
@@ -41,6 +60,14 @@ def _only_system_manager() -> None:
 def _only_logged_in_user() -> None:
     if frappe.session.user == "Guest":
         frappe.throw("Login required", frappe.PermissionError)
+
+
+def _user_has_role(role: str) -> bool:
+    return role in set(frappe.get_roles(frappe.session.user) or [])
+
+
+def _only_maqsam_user() -> None:
+    only_maqsam_user()
 
 
 def _maqsam_integration_enabled() -> bool:
@@ -187,6 +214,155 @@ def _get_customer_phone_from_call(call: dict[str, Any]) -> str:
         or call.get("callee")
     ).strip()
 
+def _normalize_call_state(state: Any) -> str:
+    return cstr(state).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _is_terminal_call_state(state: Any) -> bool:
+    return _normalize_call_state(state) in TERMINAL_CALL_STATES
+
+
+def _parse_maqsam_timestamp_utc(value: Any):
+    if value in (None, ""):
+        return None
+
+    if isinstance(value, (int, float)):
+        seconds = float(value) / 1000 if float(value) > 10_000_000_000 else float(value)
+        return datetime.fromtimestamp(seconds, tz=timezone.utc)
+
+    try:
+        parsed = get_datetime(value)
+    except Exception:
+        return None
+
+    if not parsed:
+        return None
+    if getattr(parsed, "tzinfo", None) is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _maqsam_call_is_recent(call: dict[str, Any]) -> bool:
+    timestamp = _parse_maqsam_timestamp_utc(call.get("timestamp"))
+    if not timestamp:
+        return True
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=CURRENT_CALL_LOOKBACK_MINUTES)
+    return timestamp >= cutoff
+
+
+def _current_call_phone_from_row(row: Any) -> str:
+    direction = cstr(row.get("direction")).strip().lower()
+    if direction == "inbound":
+        return cstr(row.get("caller_number") or row.get("normalized_phone")).strip()
+    if direction == "outbound":
+        return cstr(row.get("callee_number") or row.get("normalized_phone")).strip()
+
+    return cstr(
+        row.get("normalized_phone")
+        or row.get("caller_number")
+        or row.get("callee_number")
+    ).strip()
+
+
+def _can_show_current_call_to_user(row: Any) -> bool:
+    if is_maqsam_superuser():
+        return True
+
+    # Shared service-desk policy: all Maqsam Agents may view the active inbound
+    # caller profile, while historical logs/recordings stay ownership-scoped.
+    if cstr(row.get("direction")).strip().lower() == "inbound":
+        return True
+
+    return can_access_call_log(row, ptype="read")
+
+
+def _find_current_call_context_from_logs(include_terminal: bool = False) -> dict[str, Any]:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=CURRENT_CALL_LOOKBACK_MINUTES)
+    rows = frappe.get_all(
+        "Maqsam Call Log",
+        filters={"timestamp": [">=", cutoff.replace(tzinfo=None)]},
+        fields=[
+            "name",
+            "maqsam_call_id",
+            "state",
+            "direction",
+            "agent_email",
+            "caller_number",
+            "callee_number",
+            "normalized_phone",
+            "timestamp",
+        ],
+        order_by="timestamp desc, modified desc",
+        limit=25,
+        ignore_permissions=True,
+    )
+
+    for row in rows:
+        terminal = _is_terminal_call_state(row.get("state"))
+        if terminal and not include_terminal:
+            continue
+        if not _can_show_current_call_to_user(row):
+            continue
+
+        phone = _current_call_phone_from_row(row)
+        if not phone:
+            continue
+
+        return {
+            "call_log": row.get("name"),
+            "maqsam_call_id": row.get("maqsam_call_id"),
+            "agent_email": row.get("agent_email"),
+            "state": _normalize_call_state(row.get("state")) or "ringing",
+            "direction": row.get("direction"),
+            "phone": phone,
+            "active": not terminal,
+        }
+
+    return {}
+
+
+def _find_current_call_context_from_maqsam_calls(
+    calls: list[dict[str, Any]],
+    include_terminal: bool = False,
+) -> dict[str, Any]:
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+
+        direction = cstr(call.get("direction") or call.get("type")).strip().lower()
+        if direction != "inbound":
+            continue
+        if not _maqsam_call_is_recent(call):
+            continue
+
+        state = _normalize_call_state(call.get("state")) or "ringing"
+        terminal = _is_terminal_call_state(state)
+        if terminal and not include_terminal:
+            continue
+
+        phone = _get_customer_phone_from_call(call)
+        if not phone:
+            continue
+
+        maqsam_call_id = cstr(call.get("id")).strip()
+        log_name = (
+            frappe.db.get_value("Maqsam Call Log", {"maqsam_call_id": maqsam_call_id}, "name")
+            if maqsam_call_id
+            else None
+        )
+
+        return {
+            "call_log": log_name,
+            "maqsam_call_id": maqsam_call_id,
+            "agent_email": _extract_agent_email({}, call),
+            "state": state,
+            "direction": direction,
+            "phone": phone,
+            "active": not terminal,
+        }
+
+    return {}
+
 
 def _sync_recent_calls_page(page: int = 1) -> dict[str, Any]:
     calls = get_client().list_calls(page=int(page))
@@ -194,6 +370,26 @@ def _sync_recent_calls_page(page: int = 1) -> dict[str, Any]:
         frappe.throw("Maqsam recent calls response was not a list.")
 
     result = sync_recent_calls(calls)
+    created_inbound = result.pop("created_inbound", [])
+    for item in created_inbound:
+        if not isinstance(item, dict):
+            continue
+
+        log_name = item.get("log_name")
+        call = item.get("call")
+        if not log_name or not isinstance(call, dict):
+            continue
+
+        frappe.enqueue(
+            "gain_maqsam_integration.api._dispatch_incoming_call_popup",
+            queue="short",
+            now=False,
+            enqueue_after_commit=True,
+            log_name=log_name,
+            call=call,
+            agent_email=_extract_agent_email(call, call),
+        )
+
     frappe.db.commit()
     return {"ok": True, "page": int(page), **result}
 
@@ -221,8 +417,7 @@ def _get_current_user_email() -> str:
 
 
 def _get_call_log_for_recording(call_log: str, permission: str = "read"):
-    doc = frappe.get_doc("Maqsam Call Log", call_log)
-    doc.check_permission(permission)
+    doc = enforce_call_log_access(call_log, permission)
     if not doc.maqsam_call_id:
         frappe.throw("This call log does not have a Maqsam Call ID yet.")
 
@@ -377,6 +572,53 @@ def maqsam_list_recent_calls(page: int = 1) -> list[dict[str, Any]] | Any:
 
 
 @frappe.whitelist()
+def maqsam_refresh_call_state(call_log: str, max_pages: int = 2) -> dict[str, Any]:
+    _only_maqsam_user()
+    if not _maqsam_integration_enabled():
+        frappe.throw("Maqsam integration is disabled.")
+
+    doc = enforce_call_log_access(call_log, "read")
+    call_id = cstr(doc.maqsam_call_id).strip()
+    if not call_id:
+        frappe.throw("This call log does not have a Maqsam Call ID yet.")
+
+    matched_call: dict[str, Any] | None = None
+    client = get_client()
+    pages = max(1, min(int(max_pages or 1), 5))
+
+    for page in range(1, pages + 1):
+        calls = client.list_calls(page=page)
+        if not isinstance(calls, list):
+            break
+
+        for call in calls:
+            if cstr(call.get("id")).strip() == call_id:
+                matched_call = call
+                break
+
+        if matched_call or not calls:
+            break
+
+    synced = False
+    if matched_call:
+        log_name, _created = upsert_maqsam_call(matched_call)
+        frappe.db.commit()
+        if log_name:
+            doc = enforce_call_log_access(log_name, "read")
+            synced = True
+
+    return {
+        "ok": True,
+        "synced": synced,
+        "call_log": doc.name,
+        "maqsam_call_id": doc.maqsam_call_id,
+        "state": doc.state,
+        "outcome": doc.outcome,
+        "duration": doc.duration,
+    }
+
+
+@frappe.whitelist()
 def maqsam_list_agents(page: int = 0) -> list[dict[str, Any]] | Any:
     _only_system_manager()
     return get_client().list_agents(page=int(page))
@@ -386,7 +628,7 @@ def maqsam_list_agents(page: int = 0) -> list[dict[str, Any]] | Any:
 def maqsam_get_click_to_call_defaults(
     doctype: str | None = None, docname: str | None = None
 ) -> dict[str, Any]:
-    _only_logged_in_user()
+    _only_maqsam_user()
     client = get_client()
     agent_email = _get_current_user_email()
     raw_phone_candidates = _get_click_to_call_phone_candidates(doctype, docname)
@@ -416,11 +658,44 @@ def maqsam_get_click_to_call_defaults(
 
 @frappe.whitelist()
 def maqsam_get_agent_status() -> dict[str, Any]:
-    _only_logged_in_user()
+    _only_maqsam_user()
     client = get_client()
     status = client.get_agent_status(_get_current_user_email())
     status["portal_url"] = client.get_portal_url()
     return status
+
+@frappe.whitelist()
+def maqsam_get_current_call_profile(sync: int = 1) -> dict[str, Any]:
+    _only_maqsam_user()
+
+    context = _find_current_call_context_from_logs()
+    recent_calls: list[dict[str, Any]] = []
+    if not context and cint(sync):
+        try:
+            calls = get_client().list_calls(page=1)
+            if isinstance(calls, list):
+                recent_calls = calls
+                sync_recent_calls(calls)
+                frappe.db.commit()
+                context = _find_current_call_context_from_logs()
+                if not context:
+                    context = _find_current_call_context_from_maqsam_calls(calls)
+        except Exception:
+            frappe.db.rollback()
+            frappe.log_error(frappe.get_traceback(), "Maqsam Current Call Sync Failed")
+
+    if not context and recent_calls:
+        context = _find_current_call_context_from_maqsam_calls(recent_calls, include_terminal=True)
+
+    if not context:
+        context = _find_current_call_context_from_logs(include_terminal=True)
+
+    if not context:
+        return {}
+
+    phone = context.get("phone")
+    context["profile"] = get_caller_profile(phone=phone) if phone else {}
+    return context
 
 
 @frappe.whitelist()
@@ -429,51 +704,64 @@ def maqsam_get_caller_profile(
     call_log: str | None = None,
     maqsam_call_id: str | None = None,
 ) -> dict[str, Any]:
-    _only_logged_in_user()
+    _only_maqsam_user()
+    if call_log:
+        enforce_call_log_access(call_log, "read")
+        return get_caller_profile(call_log=call_log)
+
+    if maqsam_call_id:
+        log_name = frappe.db.get_value(
+            "Maqsam Call Log",
+            {"maqsam_call_id": cstr(maqsam_call_id).strip()},
+            "name",
+        )
+        if not log_name:
+            frappe.throw("Maqsam Call Log was not found for this Maqsam Call ID.", frappe.PermissionError)
+        enforce_call_log_access(log_name, "read")
+        return get_caller_profile(call_log=log_name)
+
+    if phone and not is_maqsam_superuser():
+        frappe.throw("Direct Caller 360 phone lookup requires Maqsam Supervisor access.", frappe.PermissionError)
+
     return get_caller_profile(phone=phone, call_log=call_log, maqsam_call_id=maqsam_call_id)
 
 
 def _get_broadcast_users() -> list[str]:
-    """Users who should see the incoming-call popup when no specific agent is resolved."""
-    has_role = frappe.db.exists("Role", MAQSAM_AGENT_ROLE)
-    if has_role:
-        rows = frappe.get_all(
-            "Has Role",
-            filters={"role": MAQSAM_AGENT_ROLE, "parenttype": "User"},
-            fields=["parent"],
+    """Users who should see the incoming-call popup when no specific agent is resolved.
+
+    Limited to users holding the `Maqsam Agent` role to avoid spamming every
+    Desk user in the org. If the role does not exist or has no enabled members,
+    nobody is notified — the call log is still saved for reporting.
+    """
+    if not frappe.db.exists("Role", MAQSAM_AGENT_ROLE):
+        frappe.log_error(
+            title="Maqsam Broadcast Skipped",
+            message=(
+                f"Role '{MAQSAM_AGENT_ROLE}' does not exist. "
+                "No incoming-call popup will be shown until the role is created "
+                "and assigned to call-center staff."
+            ),
         )
-        users = {row.parent for row in rows}
-        if users:
-            enabled = frappe.get_all(
-                "User",
-                filters={"enabled": 1, "name": ["in", list(users)]},
-                pluck="name",
-            )
-            return [u for u in enabled if u != "Administrator"]
+        return []
 
-    return [
-        u.name
-        for u in frappe.get_all(
-            "User",
-            filters={"enabled": 1, "user_type": "System User", "name": ["!=", "Administrator"]},
-            fields=["name"],
-        )
-    ]
+    rows = frappe.get_all(
+        "Has Role",
+        filters={"role": MAQSAM_AGENT_ROLE, "parenttype": "User"},
+        fields=["parent"],
+    )
+    users = {row.parent for row in rows}
+    if not users:
+        return []
+
+    enabled = frappe.get_all(
+        "User",
+        filters={"enabled": 1, "name": ["in", list(users)]},
+        pluck="name",
+    )
+    return [u for u in enabled if u != "Administrator"]
 
 
-@frappe.whitelist(allow_guest=True)
-@rate_limit(limit=120, seconds=60)
-def maqsam_receive_call_event() -> dict[str, Any]:
-    expected_token = _get_incoming_webhook_token()
-    received_token = _get_request_token()
-    if not expected_token or not received_token or not hmac.compare_digest(received_token, expected_token):
-        frappe.throw("Invalid Maqsam webhook token.", frappe.PermissionError)
-
-    payload = _get_request_payload()
-    call = _extract_webhook_call(payload)
-    if not call.get("id"):
-        frappe.throw("Maqsam webhook payload does not include a call id.")
-
+def _process_maqsam_webhook_payload_async(payload: dict[str, Any], call: dict[str, Any]) -> None:
     original_user = frappe.session.user
     frappe.set_user("Administrator")
     try:
@@ -481,15 +769,35 @@ def maqsam_receive_call_event() -> dict[str, Any]:
         frappe.db.commit()
         agent_email = _extract_agent_email(payload, call)
 
-        frappe.enqueue(
-            "gain_maqsam_integration.api._dispatch_incoming_call_popup",
-            queue="short",
-            now=False,
-            enqueue_after_commit=True,
-            log_name=log_name,
-            call=call,
-            agent_email=agent_email,
-        )
+        _publish_fast_notification(log_name, call, agent_email)
+
+        if created:
+            _dispatch_incoming_call_popup(log_name, call, agent_email)
+    finally:
+        frappe.set_user(original_user)
+        frappe.local.message_log = []
+
+
+def _maqsam_receive_call_event_sync(payload: dict[str, Any], call: dict[str, Any]) -> dict[str, Any]:
+    original_user = frappe.session.user
+    frappe.set_user("Administrator")
+    try:
+        log_name, created = upsert_maqsam_call(call)
+        frappe.db.commit()
+        agent_email = _extract_agent_email(payload, call)
+
+        _publish_fast_notification(log_name, call, agent_email)
+
+        if created:
+            frappe.enqueue(
+                "gain_maqsam_integration.api._dispatch_incoming_call_popup",
+                queue="short",
+                now=False,
+                enqueue_after_commit=True,
+                log_name=log_name,
+                call=call,
+                agent_email=agent_email,
+            )
     finally:
         frappe.set_user(original_user)
         frappe.local.message_log = []
@@ -498,8 +806,45 @@ def maqsam_receive_call_event() -> dict[str, Any]:
         "ok": True,
         "call_log": log_name,
         "created": created,
-        "queued": True,
+        "queued": bool(created),
     }
+
+
+@frappe.whitelist(allow_guest=True)
+@rate_limit(limit=120, seconds=60)
+def maqsam_receive_call_event() -> dict[str, Any]:
+    original_form_dict = getattr(frappe.local, "form_dict", None)
+    original_request = getattr(frappe.local, "request", None)
+    try:
+        expected_token = _get_incoming_webhook_token()
+        received_token = _get_request_token()
+        if not expected_token or not received_token or not hmac.compare_digest(received_token, expected_token):
+            frappe.throw("Invalid Maqsam webhook token.", frappe.PermissionError)
+
+        payload = _get_request_payload()
+        call = _extract_webhook_call(payload)
+        if not call.get("id"):
+            frappe.throw("Maqsam webhook payload does not include a call id.")
+
+        if frappe.flags.in_test:
+            return _maqsam_receive_call_event_sync(payload, call)
+
+        # Convert incoming payload to background job entirely to prevent race conditions.
+        frappe.enqueue(
+            "gain_maqsam_integration.api._process_maqsam_webhook_payload_async",
+            queue="short",
+            now=False,
+            payload=payload,
+            call=call,
+        )
+
+        return {
+            "ok": True,
+            "queued": True,
+        }
+    finally:
+        frappe.local.form_dict = original_form_dict
+        frappe.local.request = original_request
 
 
 def _is_blocked(phone: str) -> bool:
@@ -511,40 +856,126 @@ def _is_blocked(phone: str) -> bool:
     return bool(frappe.db.exists("Maqsam Blocked Number", digits))
 
 
-def _dispatch_incoming_call_popup(log_name: str, call: dict[str, Any], agent_email: str) -> None:
-    """Resolve the caller profile and publish the realtime popup event.
+def _resolve_popup_target_users(agent_email: str, settings) -> list[str]:
+    """Pick which user(s) should receive the realtime popup for this call.
 
-    Runs asynchronously so the webhook can return immediately. Tagged numbers
-    (Wrong Number / Spam / Blocked) skip the popup but the call log is still
-    saved for reporting.
+    Inbound-call handling is a shared service-desk workflow: any available
+    Maqsam Agent should see the caller profile even if Maqsam already attached
+    the call to a specific agent email. Ownership checks on call-log actions
+    still protect write/update/recording operations.
     """
-    settings = _get_maqsam_settings()
-    if not settings or not settings.get("enable_incoming_call_popup"):
-        return
+    return _get_broadcast_users()
 
-    profile_phone = _get_customer_phone_from_call(call)
-    if _is_blocked(profile_phone):
-        return
+def _get_latest_call_state(log_name: str | None, fallback: Any = None) -> str:
+    state = cstr(fallback or "ringing").strip() or "ringing"
+    if not log_name:
+        return state
 
-    profile = get_caller_profile(phone=profile_phone) if profile_phone else {}
+    try:
+        latest_state = frappe.db.get_value("Maqsam Call Log", log_name, "state")
+    except Exception:
+        return state
 
-    target_user = _resolve_user_from_email(agent_email)
-    if not target_user:
-        target_user = _resolve_user_from_email(cstr(settings.get("default_agent_email")))
+    return cstr(latest_state).strip() or state
 
-    target_users = [target_user] if target_user else _get_broadcast_users()
-    if not target_users:
-        return
 
-    event_data = {
-        "call_log": log_name,
-        "maqsam_call_id": call.get("id"),
-        "agent_email": agent_email,
-        "state": cstr(call.get("state") or "ringing"),
-        "profile": profile,
-    }
-    for user in target_users:
-        frappe.publish_realtime("maqsam_incoming_call", event_data, user=user)
+def _publish_fast_notification(log_name: str, call: dict[str, Any], agent_email: str) -> None:
+    """Fire a lightweight `maqsam_incoming_call` event from the webhook hot
+    path so the drawer skeleton shows immediately.
+
+    Carries the phone, direction, and state — but NOT the heavy profile
+    payload, which is fetched separately in `_dispatch_incoming_call_popup`.
+    Wrapped in a broad try/except so a transient publish failure can't fail
+    the webhook itself (the call log is already persisted).
+    """
+    try:
+        settings = _get_maqsam_settings()
+        if not settings or not settings.get("enable_incoming_call_popup"):
+            return
+
+        profile_phone = _get_customer_phone_from_call(call)
+        if _is_blocked(profile_phone):
+            return
+
+        target_users = _resolve_popup_target_users(agent_email, settings)
+        if not target_users:
+            return
+
+        event_data = {
+            "call_log": log_name,
+            "maqsam_call_id": call.get("id"),
+            "agent_email": agent_email,
+            "state": _get_latest_call_state(log_name, call.get("state") or "ringing"),
+            "phone": profile_phone,
+            "direction": cstr(call.get("direction") or ""),
+            "lite": True,
+        }
+        for user in target_users:
+            frappe.publish_realtime("maqsam_incoming_call", event_data, user=user)
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "Maqsam Fast Notification Failed")
+
+
+def _dispatch_incoming_call_popup(log_name: str, call: dict[str, Any], agent_email: str) -> None:
+    """Resolve the caller profile and publish the heavy realtime popup event.
+
+    Runs asynchronously after the webhook returns so the lookup latency
+    (4-doctype matching + invoices + appointments) doesn't block Maqsam's
+    HTTP timeout. Tagged numbers (Wrong Number / Spam / Blocked) skip the
+    popup but the call log is still saved for reporting.
+
+    Wrapped in try/except so a profile-lookup failure (bad data, missing
+    DocType, transient DB hiccup) gets logged instead of leaving the agent
+    staring at the skeleton drawer with no diagnostic trail.
+    """
+    try:
+        settings = _get_maqsam_settings()
+        if not settings or not settings.get("enable_incoming_call_popup"):
+            return
+
+        target_users = _resolve_popup_target_users(agent_email, settings)
+        if not target_users:
+            frappe.log_error(
+                title="Maqsam Profile Dispatch Skipped",
+                message=(
+                    f"No target users resolved for call {call.get('id')}. "
+                    f"agent_email={agent_email!r}, "
+                    f"default_agent_email={cstr(settings.get('default_agent_email'))!r}. "
+                    "Either map the agent's email to a Frappe user or assign "
+                    "the Maqsam Agent role to call-center staff."
+                ),
+            )
+            return
+
+        profile_phone = _get_customer_phone_from_call(call)
+        if _is_blocked(profile_phone):
+            return
+
+        original_user = frappe.session.user
+        for user in target_users:
+            try:
+                frappe.set_user(user)
+                profile = get_caller_profile(phone=profile_phone) if profile_phone else {}
+                event_data = {
+                    "call_log": log_name,
+                    "maqsam_call_id": call.get("id"),
+                    "agent_email": agent_email,
+                    "state": _get_latest_call_state(log_name, call.get("state") or "ringing"),
+                    "profile": profile,
+                }
+                frappe.publish_realtime("maqsam_incoming_call", event_data, user=user)
+            finally:
+                frappe.set_user(original_user)
+    except Exception:
+        # Don't silently swallow lookup errors — without this log the agent
+        # would just see the skeleton drawer forever with no clue why.
+        frappe.log_error(
+            title="Maqsam Profile Dispatch Failed",
+            message=(
+                f"call_log={log_name}, maqsam_call_id={call.get('id')}, "
+                f"agent_email={agent_email!r}\n\n{frappe.get_traceback()}"
+            ),
+        )
 
 
 @frappe.whitelist()
@@ -554,13 +985,12 @@ def maqsam_tag_call(call_log: str, label: str, reason: str | None = None) -> dic
     Future incoming calls from the same digits will set outcome but skip the
     realtime popup.
     """
-    _only_logged_in_user()
+    _only_maqsam_user()
     allowed = {"Wrong Number", "Spam", "Blocked"}
     if label not in allowed:
         frappe.throw(f"Label must be one of: {', '.join(sorted(allowed))}")
 
-    doc = frappe.get_doc("Maqsam Call Log", call_log)
-    doc.check_permission("write")
+    doc = enforce_call_log_access(call_log, "write")
     doc.outcome = "Wrong Number" if label == "Wrong Number" else "Other"
     note_line = f"[{label}] {cstr(reason).strip()}".strip()
     doc.notes = "\n".join(filter(None, [doc.notes, note_line]))
@@ -585,7 +1015,7 @@ def maqsam_tag_call(call_log: str, label: str, reason: str | None = None) -> dic
 
 @frappe.whitelist()
 def maqsam_save_call_recording(call_log: str) -> dict[str, Any]:
-    _only_logged_in_user()
+    _only_maqsam_user()
 
     doc = _get_call_log_for_recording(call_log, permission="write")
     file_doc = _get_recording_file_doc(doc.recording_file)
@@ -628,7 +1058,7 @@ def maqsam_save_call_recording(call_log: str) -> dict[str, Any]:
 
 @frappe.whitelist()
 def maqsam_get_call_recording(call_log: str, download: int = 0) -> None:
-    _only_logged_in_user()
+    _only_maqsam_user()
 
     doc = _get_call_log_for_recording(call_log, permission="read")
     file_doc = _get_recording_file_doc(doc.recording_file)
@@ -647,7 +1077,7 @@ def maqsam_get_call_recording(call_log: str, download: int = 0) -> None:
 
 @frappe.whitelist()
 def maqsam_get_autologin_url(continue_path: str | None = None) -> dict[str, str]:
-    _only_logged_in_user()
+    _only_maqsam_user()
     client = get_client()
     return {
         "url": client.get_autologin_url(
@@ -665,7 +1095,7 @@ def maqsam_create_click_to_call(
     doctype: str | None = None,
     docname: str | None = None,
 ) -> dict[str, Any]:
-    _only_logged_in_user()
+    _only_maqsam_user()
     if not cstr(phone).strip():
         frappe.throw("Phone Number is required")
 
@@ -713,19 +1143,42 @@ def maqsam_update_call_outcome(
     follow_up_required: int = 0,
     follow_up_date: str | None = None,
 ) -> dict[str, Any]:
-    _only_logged_in_user()
+    _only_maqsam_user()
     allowed_outcomes = {"Answered", "No Answer", "Busy", "Wrong Number", "Follow Up", "Other"}
     if outcome and outcome not in allowed_outcomes:
         frappe.throw("Invalid call outcome.")
 
-    doc = frappe.get_doc("Maqsam Call Log", call_log)
-    doc.check_permission("write")
+    doc = enforce_call_log_access(call_log, "write")
     doc.outcome = outcome or doc.outcome
     doc.notes = cstr(notes).strip() or doc.notes
     doc.follow_up_required = 1 if int(follow_up_required or 0) else 0
     doc.follow_up_date = follow_up_date if doc.follow_up_required else None
     doc.save()
     return {"ok": True, "call_log": doc.name}
+
+
+@frappe.whitelist()
+def maqsam_link_call_to_record(call_log: str, doctype: str, docname: str) -> dict[str, Any]:
+    _only_maqsam_user()
+    allowed_doctypes = {"Patient", "Customer", "Lead", "Contact", "Patient Appointment"}
+    if doctype not in allowed_doctypes:
+        frappe.throw("Unsupported DocType for Maqsam call linking.")
+
+    target = frappe.get_doc(doctype, docname)
+    target.check_permission("read")
+
+    doc = enforce_call_log_access(call_log, "write")
+    doc.linked_doctype = doctype
+    doc.linked_docname = docname
+    doc.linked_title = target.get_title()
+    doc.save()
+    return {
+        "ok": True,
+        "call_log": doc.name,
+        "linked_doctype": doctype,
+        "linked_docname": docname,
+        "linked_title": doc.linked_title,
+    }
 
 
 @frappe.whitelist()

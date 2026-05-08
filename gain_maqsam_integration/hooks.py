@@ -4,6 +4,7 @@ app_publisher = "Ghain"
 app_description = "Maqsam integration for Gain"
 app_email = "ops@ghain.local"
 app_license = "mit"
+app_version = "0.1.0"
 
 required_apps = ["erpnext"]
 
@@ -31,6 +32,14 @@ override_doctype_dashboards = {
 	"Customer": "gain_maqsam_integration.dashboards.customer_dashboard.get_data",
 	"Lead": "gain_maqsam_integration.dashboards.lead_dashboard.get_data",
 	"Contact": "gain_maqsam_integration.dashboards.contact_dashboard.get_data",
+}
+
+permission_query_conditions = {
+    "Maqsam Call Log": "gain_maqsam_integration.permissions.call_log_query_conditions",
+}
+
+has_permission = {
+    "Maqsam Call Log": "gain_maqsam_integration.permissions.has_call_log_permission",
 }
 
 scheduler_events = {

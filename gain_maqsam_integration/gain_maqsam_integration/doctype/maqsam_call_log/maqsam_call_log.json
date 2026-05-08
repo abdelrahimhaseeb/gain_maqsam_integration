@@ -121,7 +121,8 @@
    "fieldname": "timestamp",
    "fieldtype": "Datetime",
    "in_list_view": 1,
-   "label": "Call Timestamp"
+   "label": "Call Timestamp",
+   "search_index": 1
   },
   {
    "default": "0",
@@ -152,17 +153,20 @@
   {
    "fieldname": "caller_number",
    "fieldtype": "Data",
-   "label": "Caller Number"
+   "label": "Caller Number",
+   "search_index": 1
   },
   {
    "fieldname": "callee_number",
    "fieldtype": "Data",
-   "label": "Callee Number"
+   "label": "Callee Number",
+   "search_index": 1
   },
   {
    "fieldname": "normalized_phone",
    "fieldtype": "Data",
-   "label": "Normalized Phone"
+   "label": "Normalized Phone",
+   "search_index": 1
   },
   {
    "fieldname": "link_section",
@@ -181,7 +185,8 @@
    "fieldtype": "Dynamic Link",
    "in_list_view": 1,
    "label": "Linked Document",
-   "options": "linked_doctype"
+   "options": "linked_doctype",
+   "search_index": 1
   },
   {
    "fieldname": "column_break_link",
@@ -250,28 +255,33 @@
   {
    "fieldname": "payload_view_tab",
    "fieldtype": "Tab Break",
-   "label": "Payload View"
+   "label": "Payload View",
+   "permlevel": 1
   },
   {
    "fieldname": "payload_view_html",
    "fieldtype": "HTML",
-   "label": "Payload View"
+   "label": "Payload View",
+   "permlevel": 1
   },
   {
    "fieldname": "raw_payload_tab",
    "fieldtype": "Tab Break",
-   "label": "Raw Payload"
+   "label": "Raw Payload",
+   "permlevel": 1
   },
   {
    "fieldname": "raw_payload_section",
    "fieldtype": "Section Break",
-   "label": "Raw Payload"
+   "label": "Raw Payload",
+   "permlevel": 1
   },
   {
    "fieldname": "raw_payload",
    "fieldtype": "Code",
    "label": "Raw Payload",
-   "options": "JSON"
+   "options": "JSON",
+   "permlevel": 1
   }
  ],
  "index_web_pages_for_search": 0,
@@ -295,20 +305,28 @@
    "write": 1
   },
   {
-   "create": 1,
-   "email": 1,
+   "export": 1,
+   "permlevel": 1,
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "Maqsam Agent",
-   "share": 1,
-   "write": 1
+   "role": "System Manager"
   },
   {
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "Desk User"
+   "role": "Maqsam Agent",
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maqsam Supervisor",
+   "write": 1
   }
  ],
  "search_fields": "maqsam_call_id,agent_email,caller_number,callee_number,linked_title,linked_docname",

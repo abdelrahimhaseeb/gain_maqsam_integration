@@ -402,4 +402,25 @@ class MaqsamClient:
 
 
 def get_client() -> MaqsamClient:
-    return MaqsamClient()
+    """Return a request-scoped MaqsamClient.
+
+    Building a fresh client costs ~50–100ms (DB round-trip to read settings
+    + AES decrypt of `access_secret` + new `requests.Session()`). A single
+    Caller 360 popup or click-to-call invocation can hit `get_client()`
+    3–5 times via different code paths, so we cache the instance on
+    `frappe.local` for the lifetime of the request. The next request gets
+    a fresh client automatically — settings changes take effect on the
+    next webhook/HTTP call without a restart.
+    """
+    cached = getattr(frappe.local, "_maqsam_client", None)
+    if cached is not None:
+        return cached
+
+    client = MaqsamClient()
+    try:
+        frappe.local._maqsam_client = client
+    except Exception:
+        # Some background contexts (e.g. unit-test bootstrap) don't expose
+        # frappe.local; fall through and return the un-cached client.
+        pass
+    return client

@@ -19,22 +19,22 @@ frappe.pages["maqsam-dialer"].on_page_load = function (wrapper) {
 	`);
 };
 
-frappe.pages["maqsam-dialer"].on_page_show = function () {
+frappe.pages["maqsam-dialer"].on_page_show = async function () {
 	const previous = frappe.get_prev_route?.() || [];
-	const tryOpenAndLeave = () => {
+	const tryOpenAndLeave = async () => {
 		const dialer = window.gain_maqsam?.dialer;
 		if (!dialer?.open) return false;
-		dialer.open();
+		await dialer.open({ allowHiddenRoute: true });
 		// Land back where the user was; fall back to the workspace.
 		const target = previous.length ? previous : ["workspace", "Maqsam Call Center"];
-		setTimeout(() => frappe.set_route(...target), 50);
+		setTimeout(() => frappe.set_route(...target), 150);
 		return true;
 	};
 
-	if (tryOpenAndLeave()) return;
+	if (await tryOpenAndLeave()) return;
 	let attempts = 0;
-	const interval = setInterval(() => {
+	const interval = setInterval(async () => {
 		attempts += 1;
-		if (tryOpenAndLeave() || attempts > 30) clearInterval(interval);
+		if ((await tryOpenAndLeave()) || attempts > 30) clearInterval(interval);
 	}, 100);
 };

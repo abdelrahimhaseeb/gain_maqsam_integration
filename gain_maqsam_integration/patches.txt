@@ -6,3 +6,5 @@ gain_maqsam_integration.patches.dedupe_maqsam_call_id
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
 gain_maqsam_integration.patches.setup_maqsam_agent_role
+gain_maqsam_integration.patches.setup_maqsam_supervisor_role
+gain_maqsam_integration.patches.add_call_log_search_indexes

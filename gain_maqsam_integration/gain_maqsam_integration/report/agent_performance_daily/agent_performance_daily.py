@@ -5,8 +5,11 @@ from typing import Any
 import frappe
 from frappe import _
 
+from gain_maqsam_integration.permissions import get_call_log_report_scope, only_maqsam_user
+
 
 def execute(filters: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    only_maqsam_user()
     filters = filters or {}
     return _columns(), _data(filters)
 
@@ -28,9 +31,14 @@ def _columns() -> list[dict[str, Any]]:
 def _data(filters: dict[str, Any]) -> list[dict[str, Any]]:
     from_date = filters.get("from_date") or frappe.utils.add_days(frappe.utils.today(), -30)
     to_date = filters.get("to_date") or frappe.utils.today()
+    scope_condition, scope_params = get_call_log_report_scope()
+    conditions = ["DATE(timestamp) BETWEEN %(from_date)s AND %(to_date)s"]
+    if scope_condition:
+        conditions.append(scope_condition)
+    params: dict[str, Any] = {"from_date": from_date, "to_date": to_date, **scope_params}
 
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT
             COALESCE(NULLIF(agent_email, ''), 'Unassigned') AS agent_email,
             COUNT(*)                                                            AS total_calls,
@@ -41,11 +49,11 @@ def _data(filters: dict[str, Any]) -> list[dict[str, Any]]:
             ROUND(AVG(NULLIF(duration, 0)), 0)                                  AS avg_duration,
             SUM(COALESCE(duration, 0))                                          AS total_duration
         FROM `tabMaqsam Call Log`
-        WHERE DATE(timestamp) BETWEEN %(from_date)s AND %(to_date)s
+        WHERE {" AND ".join(conditions)}
         GROUP BY COALESCE(NULLIF(agent_email, ''), 'Unassigned')
         ORDER BY total_calls DESC
         """,
-        {"from_date": from_date, "to_date": to_date},
+        params,
         as_dict=True,
     )
 

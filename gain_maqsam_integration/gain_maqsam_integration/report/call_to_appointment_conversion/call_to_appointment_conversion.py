@@ -5,8 +5,11 @@ from typing import Any
 import frappe
 from frappe import _
 
+from gain_maqsam_integration.permissions import get_call_log_report_scope, only_maqsam_user
+
 
 def execute(filters: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    only_maqsam_user()
     filters = filters or {}
     if not frappe.db.exists("DocType", "Patient Appointment"):
         frappe.throw(_("This report requires the Healthcare app (Patient Appointment doctype)."))
@@ -27,22 +30,29 @@ def _data(filters: dict[str, Any]) -> list[dict[str, Any]]:
     from_date = filters.get("from_date") or frappe.utils.add_days(frappe.utils.today(), -30)
     to_date = filters.get("to_date") or frappe.utils.today()
     window_hours = int(filters.get("window_hours") or 24)
+    scope_condition, scope_params = get_call_log_report_scope()
+    conditions = [
+        "direction = 'inbound'",
+        "outcome = 'Answered'",
+        "linked_doctype = 'Patient'",
+        "linked_docname IS NOT NULL",
+        "DATE(timestamp) BETWEEN %(from_date)s AND %(to_date)s",
+    ]
+    if scope_condition:
+        conditions.append(scope_condition)
+    params: dict[str, Any] = {"from_date": from_date, "to_date": to_date, **scope_params}
 
     # Pull answered inbound calls linked to a Patient
     calls = frappe.db.sql(
-        """
+        f"""
         SELECT
             COALESCE(NULLIF(agent_email, ''), 'Unassigned') AS agent_email,
             linked_docname                                  AS patient,
             timestamp                                       AS call_time
         FROM `tabMaqsam Call Log`
-        WHERE direction = 'inbound'
-          AND outcome = 'Answered'
-          AND linked_doctype = 'Patient'
-          AND linked_docname IS NOT NULL
-          AND DATE(timestamp) BETWEEN %(from_date)s AND %(to_date)s
+        WHERE {" AND ".join(conditions)}
         """,
-        {"from_date": from_date, "to_date": to_date},
+        params,
         as_dict=True,
     )
 

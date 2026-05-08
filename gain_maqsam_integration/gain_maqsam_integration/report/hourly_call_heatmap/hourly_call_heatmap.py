@@ -5,6 +5,8 @@ from typing import Any
 import frappe
 from frappe import _
 
+from gain_maqsam_integration.permissions import get_call_log_report_scope, only_maqsam_user
+
 
 # MySQL DAYOFWEEK: 1=Sunday ... 7=Saturday
 DAY_NAMES = {
@@ -19,18 +21,24 @@ DAY_NAMES = {
 
 
 def execute(filters: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], None, dict[str, Any]]:
+    only_maqsam_user()
     filters = filters or {}
     days = int(filters.get("days") or 30)
     since = frappe.utils.add_days(frappe.utils.now_datetime(), -days)
+    scope_condition, scope_params = get_call_log_report_scope()
+    conditions = ["timestamp >= %(since)s"]
+    if scope_condition:
+        conditions.append(scope_condition)
+    params: dict[str, Any] = {"since": since, **scope_params}
 
     rows = frappe.db.sql(
-        """
+        f"""
         SELECT DAYOFWEEK(timestamp) AS dow, HOUR(timestamp) AS hour, COUNT(*) AS calls
         FROM `tabMaqsam Call Log`
-        WHERE timestamp >= %(since)s
+        WHERE {" AND ".join(conditions)}
         GROUP BY DAYOFWEEK(timestamp), HOUR(timestamp)
         """,
-        {"since": since},
+        params,
         as_dict=True,
     )
 

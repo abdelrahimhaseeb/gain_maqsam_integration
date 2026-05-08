@@ -5,8 +5,11 @@ from typing import Any
 import frappe
 from frappe import _
 
+from gain_maqsam_integration.permissions import get_call_log_report_scope, only_maqsam_user
+
 
 def execute(filters: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    only_maqsam_user()
     filters = filters or {}
     return _columns(), _data(filters)
 
@@ -29,9 +32,18 @@ def _data(filters: dict[str, Any]) -> list[dict[str, Any]]:
     days = int(filters.get("days") or 30)
     limit = int(filters.get("limit") or 50)
     since = frappe.utils.add_days(frappe.utils.now_datetime(), -days)
+    scope_condition, scope_params = get_call_log_report_scope()
+    conditions = [
+        "direction = 'inbound'",
+        "timestamp >= %(since)s",
+        "caller_number IS NOT NULL AND caller_number != ''",
+    ]
+    if scope_condition:
+        conditions.append(scope_condition)
+    params: dict[str, Any] = {"since": since, "limit": limit, **scope_params}
 
     return frappe.db.sql(
-        """
+        f"""
         SELECT
             caller_number,
             MAX(linked_title)                                                AS linked_title,
@@ -43,13 +55,11 @@ def _data(filters: dict[str, Any]) -> list[dict[str, Any]]:
             MAX(timestamp)                                                   AS last_call,
             SUM(COALESCE(duration, 0))                                       AS total_duration
         FROM `tabMaqsam Call Log`
-        WHERE direction = 'inbound'
-          AND timestamp >= %(since)s
-          AND caller_number IS NOT NULL AND caller_number != ''
+        WHERE {" AND ".join(conditions)}
         GROUP BY caller_number
         ORDER BY total_calls DESC, last_call DESC
         LIMIT %(limit)s
         """,
-        {"since": since, "limit": limit},
+        params,
         as_dict=True,
     )

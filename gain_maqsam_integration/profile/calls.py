@@ -5,6 +5,7 @@ from typing import Any
 import frappe
 from frappe.utils import format_datetime
 
+from gain_maqsam_integration.permissions import can_access_call_log
 from gain_maqsam_integration.profile.phone import digits_only, phone_matches_any, phone_suffix
 
 
@@ -43,11 +44,13 @@ def get_recent_calls(phone: str, limit: int = 10) -> list[dict[str, Any]]:
         fields=CALL_LOG_FIELDS,
         or_filters=or_filters,
         order_by="timestamp desc, creation desc",
-        limit_page_length=limit * 3,
+        limit=limit * 3,
         ignore_permissions=True,
     )
     calls: list[dict[str, Any]] = []
     for row in rows:
+        if not can_access_call_log(row, ptype="read"):
+            continue
         if not any(
             phone_matches_any(row.get(field), lookup_numbers)
             for field in ("caller_number", "callee_number", "normalized_phone")

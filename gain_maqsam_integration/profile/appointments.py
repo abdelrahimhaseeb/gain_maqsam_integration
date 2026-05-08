@@ -5,6 +5,7 @@ from typing import Any
 import frappe
 from frappe.utils import format_datetime, get_datetime, now_datetime
 
+from gain_maqsam_integration.permissions import can_read_document
 from gain_maqsam_integration.profile.invoices import get_related_patients_and_customers
 
 
@@ -37,13 +38,15 @@ def get_appointments(matches: list[dict[str, Any]]) -> dict[str, Any]:
         fields=fields,
         filters={"patient": ["in", list(patients)], "docstatus": ["!=", 2]},
         order_by="appointment_datetime desc, appointment_date desc, creation desc",
-        limit_page_length=100,
+        limit=100,
         ignore_permissions=True,
     )
     now = now_datetime()
     upcoming: list[dict[str, Any]] = []
     recent: list[dict[str, Any]] = []
     for row in rows:
+        if not can_read_document("Patient Appointment", row.name):
+            continue
         item = dict(row)
         when = item.get("appointment_datetime")
         if not when and item.get("appointment_date"):

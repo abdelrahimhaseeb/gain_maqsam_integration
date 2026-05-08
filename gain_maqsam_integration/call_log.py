@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 import frappe
-from frappe.utils import cint, get_datetime, now_datetime
+from frappe.utils import cint, cstr, get_datetime, now_datetime
 
 
 SYNC_SOURCE = "Maqsam Sync"
@@ -22,27 +23,69 @@ PHONE_LINK_FIELDS = {
 }
 
 
+PHONE_MATCH_SUFFIX_LENGTHS = (12, 11, 10, 9, 8, 7)
+
+
 def _digits(value: Any) -> str:
     return re.sub(r"\D", "", str(value or ""))
 
 
-def _phone_matches(left: Any, right: Any) -> bool:
+def _phone_match_score(left: Any, right: Any) -> int:
     left_digits = _digits(left)
     right_digits = _digits(right)
     if not left_digits or not right_digits:
-        return False
+        return 0
 
     if left_digits == right_digits:
-        return True
+        return 1000 + len(left_digits)
 
-    suffix_length = min(9, len(left_digits), len(right_digits))
-    return suffix_length >= 7 and left_digits[-suffix_length:] == right_digits[-suffix_length:]
+    for suffix_length in PHONE_MATCH_SUFFIX_LENGTHS:
+        if len(left_digits) < suffix_length or len(right_digits) < suffix_length:
+            continue
+        if left_digits[-suffix_length:] == right_digits[-suffix_length:]:
+            return suffix_length
+
+    return 0
+
+
+def _phone_matches(left: Any, right: Any) -> bool:
+    return _phone_match_score(left, right) >= 7
 
 
 def _dump_payload(payload: Any) -> str:
     if payload in (None, ""):
         return ""
     return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+
+def _is_duplicate_maqsam_call_id_error(exc: Exception) -> bool:
+    if isinstance(exc, frappe.UniqueValidationError):
+        return True
+
+    message = cstr(exc).lower()
+    return "maqsam call id" in message and "unique" in message
+
+
+def _clear_duplicate_maqsam_call_id_message() -> None:
+    message_log = getattr(frappe.local, "message_log", None)
+    if not isinstance(message_log, list):
+        return
+
+    filtered = []
+    for item in message_log:
+        if isinstance(item, dict):
+            haystack = " ".join(
+                cstr(item.get(key))
+                for key in ("message", "title", "description")
+            ).lower()
+        else:
+            haystack = cstr(item).lower()
+
+        if "maqsam call id" in haystack and "unique" in haystack:
+            continue
+        filtered.append(item)
+
+    frappe.local.message_log = filtered
 
 
 def _parse_timestamp(value: Any) -> datetime:
@@ -140,11 +183,37 @@ def get_link_context(doctype: str | None, docname: str | None) -> dict[str, str]
     }
 
 
+def _phone_suffix(phone: Any) -> str:
+    digits = _digits(phone)
+    return digits[-7:] if len(digits) >= 7 else digits
+
+
+def _phone_search_suffixes(phone: Any) -> list[str]:
+    digits = _digits(phone)
+    if not digits:
+        return []
+
+    suffixes = [digits]
+    for length in (12, 10, 9, 7):
+        if len(digits) >= length:
+            suffixes.append(digits[-length:])
+    return list(dict.fromkeys(suffixes))
+
+
 def find_linked_record_for_numbers(numbers: list[Any]) -> dict[str, str]:
     candidates = [number for number in numbers if _digits(number)]
     if not candidates:
         return {}
 
+    suffixes = {
+        suffix
+        for candidate in candidates
+        for suffix in _phone_search_suffixes(candidate)
+    }
+    if not suffixes:
+        return {}
+
+    best_match: tuple[int, str, str] | None = None
     for doctype, fields in PHONE_LINK_FIELDS.items():
         if not frappe.db.exists("DocType", doctype):
             continue
@@ -154,21 +223,39 @@ def find_linked_record_for_numbers(numbers: list[Any]) -> dict[str, str]:
         if not available_fields:
             continue
 
+        or_filters = [
+            [field, "like", f"%{suffix}%"]
+            for field in available_fields
+            for suffix in suffixes
+        ]
         records = frappe.get_all(
             doctype,
             fields=["name", *available_fields],
-            limit_page_length=500,
+            or_filters=or_filters,
+            order_by="modified desc",
+            limit=250,
             ignore_permissions=True,
         )
         for record in records:
             for field in available_fields:
-                if any(_phone_matches(record.get(field), candidate) for candidate in candidates):
-                    doc = frappe.get_doc(doctype, record.name)
-                    return {
-                        "linked_doctype": doctype,
-                        "linked_docname": record.name,
-                        "linked_title": doc.get_title(),
-                    }
+                score = max(
+                    (_phone_match_score(record.get(field), candidate) for candidate in candidates),
+                    default=0,
+                )
+                if score >= 7 and (not best_match or score > best_match[0]):
+                    best_match = (score, doctype, record.name)
+
+        if best_match and best_match[0] >= 1000:
+            break
+
+    if best_match:
+        _score, doctype, docname = best_match
+        doc = frappe.get_doc(doctype, docname)
+        return {
+            "linked_doctype": doctype,
+            "linked_docname": docname,
+            "linked_title": doc.get_title(),
+        }
 
     return {}
 
@@ -251,9 +338,15 @@ def upsert_maqsam_call(call: dict[str, Any]) -> tuple[str | None, bool]:
     if not maqsam_call_id:
         return None, False
 
-    values = _build_values_from_maqsam_call(call)
+    lock_key = f"maqsam_upsert_lock_{maqsam_call_id}"
+    for _ in range(10):
+        if not frappe.cache().get_value(lock_key):
+            frappe.cache().set_value(lock_key, 1, expires_in_sec=10)
+            break
+        time.sleep(0.5)
 
-    for attempt in range(2):
+    try:
+        values = _build_values_from_maqsam_call(call)
         existing = frappe.db.exists(CALL_LOG_DOCTYPE, {"maqsam_call_id": maqsam_call_id})
         created = not bool(existing)
         doc = frappe.get_doc(CALL_LOG_DOCTYPE, existing) if existing else frappe.new_doc(CALL_LOG_DOCTYPE)
@@ -271,20 +364,33 @@ def upsert_maqsam_call(call: dict[str, Any]) -> tuple[str | None, bool]:
             else:
                 doc.save(ignore_permissions=True)
             return doc.name, created
-        except frappe.UniqueValidationError:
-            if attempt == 0:
-                # A concurrent webhook inserted the same call_id between our
-                # exists() check and insert(). Retry once and treat as update.
-                continue
-            raise
+        except Exception as exc:
+            if not _is_duplicate_maqsam_call_id_error(exc):
+                raise
 
-    return None, False
+            _clear_duplicate_maqsam_call_id_message()
+            existing = frappe.db.exists(CALL_LOG_DOCTYPE, {"maqsam_call_id": maqsam_call_id})
+            if not existing:
+                raise
+
+            doc = frappe.get_doc(CALL_LOG_DOCTYPE, existing)
+            if doc.source == CLICK_TO_CALL_SOURCE:
+                values.pop("source", None)
+            if doc.outcome:
+                values.pop("outcome", None)
+            doc.update(values)
+            doc.save(ignore_permissions=True)
+            _clear_duplicate_maqsam_call_id_message()
+            return doc.name, False
+    finally:
+        frappe.cache().delete_value(lock_key)
 
 
 def sync_recent_calls(calls: list[dict[str, Any]]) -> dict[str, Any]:
     created = 0
     updated = 0
     logs: list[str] = []
+    created_inbound: list[dict[str, Any]] = []
 
     for call in calls:
         if not isinstance(call, dict):
@@ -297,7 +403,10 @@ def sync_recent_calls(calls: list[dict[str, Any]]) -> dict[str, Any]:
         logs.append(log_name)
         if was_created:
             created += 1
+            direction = str(call.get("direction") or call.get("type") or "").strip().lower()
+            if direction == "inbound":
+                created_inbound.append({"log_name": log_name, "call": call})
         else:
             updated += 1
 
-    return {"created": created, "updated": updated, "logs": logs}
+    return {"created": created, "updated": updated, "logs": logs, "created_inbound": created_inbound}

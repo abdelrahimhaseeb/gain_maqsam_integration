@@ -4,6 +4,7 @@ from typing import Any
 
 import frappe
 
+from gain_maqsam_integration.permissions import can_read_document
 from gain_maqsam_integration.profile.phone import phone_matches_any, phone_suffix
 
 
@@ -40,6 +41,8 @@ def _append_match(
 ) -> None:
     key = (doctype, name)
     if key in seen:
+        return
+    if not can_read_document(doctype, name):
         return
 
     seen.add(key)
@@ -86,7 +89,7 @@ def _match_standard_doctype(
         doctype,
         fields=["name", *available_fields, *extra_fields],
         or_filters=or_filters,
-        limit_page_length=50,
+        limit=50,
         ignore_permissions=True,
     )
     for record in records:
@@ -129,7 +132,7 @@ def _match_contact_child_numbers(
         "Contact Phone",
         fields=["parent", "phone"],
         filters={"parenttype": "Contact", "phone": ["like", f"%{suffix}%"]},
-        limit_page_length=50,
+        limit=50,
         ignore_permissions=True,
     )
     for row in rows:
@@ -153,11 +156,11 @@ def _append_customers_from_contacts(matches: list[dict[str, Any]], seen: set[tup
         "Dynamic Link",
         fields=["parent", "link_name"],
         filters={"parenttype": "Contact", "parent": ["in", contact_names], "link_doctype": "Customer"},
-        limit_page_length=500,
+        limit=500,
         ignore_permissions=True,
     )
     for link in links:
-        if frappe.db.exists("Customer", link.link_name):
+        if frappe.db.exists("Customer", link.link_name) and can_read_document("Customer", link.link_name):
             _append_match(
                 matches,
                 seen,
