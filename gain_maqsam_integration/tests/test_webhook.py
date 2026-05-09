@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +16,19 @@ from gain_maqsam_integration.api import (
 )
 from gain_maqsam_integration.call_log import upsert_maqsam_call
 from gain_maqsam_integration.permissions import MAQSAM_AGENT_ROLE
+
+
+class FakeRequest:
+    def __init__(self, token: str = "", payload=None, method: str = "POST", headers=None):
+        self.method = method
+        self._payload = payload or {}
+        self.headers = dict(headers or {})
+        if token:
+            self.headers.setdefault("X-Maqsam-Webhook-Token", token)
+        self.headers.setdefault("Content-Length", str(len(json.dumps(self._payload, default=str))))
+
+    def get_json(self, silent: bool = True):
+        return self._payload
 
 
 def ensure_role(role_name: str) -> None:
@@ -157,6 +171,8 @@ class TestWebhookAuth(unittest.TestCase):
             self.skipTest("Maqsam Settings doctype not installed")
         self.settings = frappe.get_single("Maqsam Settings")
         self.original_token = self.settings.get_password("incoming_webhook_token") or ""
+        self.original_enabled = self.settings.enabled
+        self.settings.enabled = 1
         self.settings.incoming_webhook_token = "test-token-with-32-plus-chars-12345"
         self.settings.save(ignore_permissions=True)
         frappe.db.commit()
@@ -164,6 +180,7 @@ class TestWebhookAuth(unittest.TestCase):
     def tearDown(self):
         # Restore the original token (or a high-entropy placeholder) so the
         # validator's min-length rule doesn't reject the teardown save.
+        self.settings.enabled = self.original_enabled
         self.settings.incoming_webhook_token = (
             self.original_token or "test-placeholder-with-32-plus-chars-1234"
         )
@@ -173,9 +190,11 @@ class TestWebhookAuth(unittest.TestCase):
                 frappe.delete_doc("Maqsam Call Log", name, force=True, ignore_permissions=True)
         frappe.db.commit()
 
-    def _set_request(self, token, payload):
-        frappe.local.form_dict = frappe._dict({"token": token, **payload})
-        frappe.local.request = None
+    def _set_request(self, token, payload, method="POST", headers=None, form_token=None):
+        frappe.local.form_dict = frappe._dict({"token": form_token} if form_token else {})
+        frappe.local.form_dict.cmd = "gain_maqsam_integration.api.maqsam_receive_call_event"
+        frappe.local.request_ip = "127.0.0.1"
+        frappe.local.request = FakeRequest(token=token, payload=payload, method=method, headers=headers)
 
     def test_missing_token_raises_permission_error(self):
         self._set_request("", {"id": "x"})
@@ -185,6 +204,38 @@ class TestWebhookAuth(unittest.TestCase):
     def test_wrong_token_raises_permission_error(self):
         self._set_request("WRONG", {"id": "x"})
         with self.assertRaises(frappe.PermissionError):
+            maqsam_receive_call_event()
+
+    def test_form_token_is_rejected_even_when_valid(self):
+        self._set_request("", {"id": "x"}, form_token="test-token-with-32-plus-chars-12345")
+        with self.assertRaises(frappe.PermissionError):
+            maqsam_receive_call_event()
+
+    def test_get_request_is_rejected(self):
+        self._set_request("test-token-with-32-plus-chars-12345", {"id": "x"}, method="GET")
+        with self.assertRaises(frappe.PermissionError):
+            maqsam_receive_call_event()
+
+    def test_disabled_integration_rejects_webhook(self):
+        self.settings.enabled = 0
+        self.settings.save(ignore_permissions=True)
+        frappe.db.commit()
+        self._set_request("test-token-with-32-plus-chars-12345", {"id": "x"})
+        with self.assertRaises(frappe.PermissionError):
+            maqsam_receive_call_event()
+
+    def test_large_payload_is_rejected(self):
+        self._set_request(
+            "test-token-with-32-plus-chars-12345",
+            {"id": "x"},
+            headers={"Content-Length": str((64 * 1024) + 1)},
+        )
+        with self.assertRaises(frappe.ValidationError):
+            maqsam_receive_call_event()
+
+    def test_invalid_direction_is_rejected(self):
+        self._set_request("test-token-with-32-plus-chars-12345", {"id": "x", "direction": "sideways"})
+        with self.assertRaises(frappe.ValidationError):
             maqsam_receive_call_event()
 
     def test_valid_token_with_missing_id_raises_validation(self):
@@ -255,11 +306,14 @@ class TestWebhookConcurrency(unittest.TestCase):
             self.skipTest("Maqsam Settings doctype not installed")
         self.settings = frappe.get_single("Maqsam Settings")
         self.original_token = self.settings.get_password("incoming_webhook_token") or ""
+        self.original_enabled = self.settings.enabled
+        self.settings.enabled = 1
         self.settings.incoming_webhook_token = "test-token-with-32-plus-chars-54321"
         self.settings.save(ignore_permissions=True)
         frappe.db.commit()
 
     def tearDown(self):
+        self.settings.enabled = self.original_enabled
         self.settings.incoming_webhook_token = (
             self.original_token or "test-placeholder-with-32-plus-chars-1234"
         )
@@ -269,12 +323,107 @@ class TestWebhookConcurrency(unittest.TestCase):
                 frappe.delete_doc("Maqsam Call Log", name, force=True, ignore_permissions=True)
         frappe.db.commit()
 
-    def _set_request(self, token, payload):
-        frappe.local.form_dict = frappe._dict({"token": token, **payload})
-        frappe.local.request = None
+    def _set_request(self, token, payload, method="POST", headers=None, form_token=None):
+        frappe.local.form_dict = frappe._dict({"token": form_token} if form_token else {})
+        frappe.local.form_dict.cmd = "gain_maqsam_integration.api.maqsam_receive_call_event"
+        frappe.local.request_ip = "127.0.0.1"
+        frappe.local.request = FakeRequest(token=token, payload=payload, method=method, headers=headers)
 
-    def test_concurrent_webhook_race_condition(self):
-        call_id = f"race-{frappe.generate_hash(length=8)}"
+    def test_physical_threading_stress(self):
+        call_id = f"stress-{frappe.generate_hash(length=8)}"
+        payload = {
+            "id": call_id,
+            "caller": "+966500000099",
+            "state": "ringing",
+            "direction": "inbound",
+            "timestamp": "2026-04-27 20:30:00",
+        }
+        site_name = frappe.local.site
+
+        def _worker():
+            frappe.init(site=site_name)
+            frappe.connect()
+            frappe.flags.in_test = True
+            original_user = getattr(frappe.session, "user", "Administrator")
+            try:
+                frappe.set_user("Administrator")
+                frappe.local.form_dict = frappe._dict()
+                frappe.local.form_dict.cmd = "gain_maqsam_integration.api.maqsam_receive_call_event"
+                frappe.local.request_ip = "127.0.0.1"
+                frappe.local.request = FakeRequest(token="test-token-with-32-plus-chars-54321", payload=payload)
+                return maqsam_receive_call_event()
+            except Exception as e:
+                return e
+            finally:
+                frappe.db.rollback()
+                frappe.set_user(original_user)
+                frappe.destroy()
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(_worker) for _ in range(5)]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+        for res in results:
+            self.assertIsInstance(res, dict, f"Worker returned exception: {res}")
+            self.assertTrue(res.get("ok"), "Webhook failed ok status")
+            if res.get("call_log"):
+                self.created_logs.append(res["call_log"])
+
+        created_count = sum(1 for r in results if isinstance(r, dict) and r.get("created"))
+        self.assertEqual(created_count, 1, "Exactly one thread should have created it")
+
+    def test_transient_deadlock_retries_and_updates_call_log(self):
+        call_id = f"deadlock-{frappe.generate_hash(length=8)}"
+        log_name, created = upsert_maqsam_call(
+            {
+                "id": call_id,
+                "caller": "+966500000099",
+                "callee": "+966112223344",
+                "state": "ringing",
+                "direction": "inbound",
+                "timestamp": "2026-04-27 20:30:00",
+            }
+        )
+        frappe.db.commit()
+        self.created_logs.append(log_name)
+        self.assertTrue(created)
+
+        payload = {
+            "id": call_id,
+            "caller": "+966500000099",
+            "callee": "+966112223344",
+            "state": "in_progress",
+            "direction": "inbound",
+            "timestamp": "2026-04-27 20:31:00",
+        }
+        self._set_request("test-token-with-32-plus-chars-54321", payload)
+
+        original_sql = frappe.db.sql
+        failures = {"count": 0}
+
+        def mock_sql(query, *args, **kwargs):
+            if "FOR UPDATE" in query and call_id in str(args) and failures["count"] == 0:
+                failures["count"] += 1
+                e = Exception("Deadlock found when trying to get lock; try restarting transaction")
+                e.args = (1213, "Deadlock found...")
+                raise e
+            return original_sql(query, *args, **kwargs)
+
+        with patch("gain_maqsam_integration.call_log.frappe.db.sql", side_effect=mock_sql), patch(
+            "gain_maqsam_integration.call_log.time.sleep",
+            return_value=None,
+        ):
+            res = maqsam_receive_call_event()
+
+        self.assertEqual(failures["count"], 1)
+        self.assertTrue(res.get("ok"))
+        self.assertFalse(res.get("created"))
+        self.assertEqual(res.get("call_log"), log_name)
+        self.assertEqual(frappe.db.get_value("Maqsam Call Log", log_name, "state"), "in_progress")
+
+    def test_repeated_deadlock_raises_visible_failure(self):
+        call_id = f"deadlock-exhaust-{frappe.generate_hash(length=8)}"
         payload = {
             "id": call_id,
             "caller": "+966500000099",
@@ -285,24 +434,21 @@ class TestWebhookConcurrency(unittest.TestCase):
         }
         self._set_request("test-token-with-32-plus-chars-54321", payload)
 
-        original_exists = frappe.db.exists
-        exists_calls = [0]
+        original_sql = frappe.db.sql
 
-        def mock_exists(dt, filters=None, **kwargs):
-            if dt == "Maqsam Call Log" and isinstance(filters, dict) and filters.get("maqsam_call_id") == call_id:
-                exists_calls[0] += 1
-                if exists_calls[0] in (2, 4, 6, 8):
-                    return None
-            return original_exists(dt, filters, **kwargs)
+        def mock_sql(query, *args, **kwargs):
+            if "FOR UPDATE" in query and call_id in str(args):
+                e = Exception("Lock wait timeout exceeded; try restarting transaction")
+                e.args = (1205, "Lock wait timeout...")
+                raise e
+            return original_sql(query, *args, **kwargs)
 
-        results = []
-        with patch("gain_maqsam_integration.call_log.frappe.db.exists", side_effect=mock_exists):
-            with patch("gain_maqsam_integration.api.frappe.enqueue") as enqueue_mock:
-                for _ in range(5):
-                    results.append(maqsam_receive_call_event())
+        with patch("gain_maqsam_integration.call_log.frappe.db.sql", side_effect=mock_sql), patch(
+            "gain_maqsam_integration.call_log.time.sleep",
+            return_value=None,
+        ):
+            with self.assertRaises(Exception) as ctx:
+                maqsam_receive_call_event()
 
-        self.assertEqual(len(results), 5)
-        created_count = sum(1 for r in results if r.get("created"))
-        self.assertEqual(created_count, 1, "Only one call should trigger creation")
-        enqueue_mock.assert_called_once()
-        self.created_logs.append(results[0]["call_log"])
+        self.assertIn("database lock contention", str(ctx.exception))
+        self.assertFalse(frappe.db.exists("Maqsam Call Log", {"maqsam_call_id": call_id}))

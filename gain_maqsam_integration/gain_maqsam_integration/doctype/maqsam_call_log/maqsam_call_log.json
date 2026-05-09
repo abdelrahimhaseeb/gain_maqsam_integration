@@ -316,8 +316,7 @@
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "Maqsam Agent",
-   "write": 1
+   "role": "Maqsam Agent"
   },
   {
    "email": 1,

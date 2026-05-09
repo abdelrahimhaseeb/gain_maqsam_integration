@@ -42,6 +42,12 @@ has_permission = {
     "Maqsam Call Log": "gain_maqsam_integration.permissions.has_call_log_permission",
 }
 
+doc_events = {
+    "Maqsam Call Log": {
+        "before_save": "gain_maqsam_integration.permissions.prevent_agent_direct_call_log_write",
+    },
+}
+
 scheduler_events = {
 	"cron": {
 		"*/5 * * * *": [

@@ -73,7 +73,7 @@
    "label": "Enable Incoming Call Popup"
   },
   {
-   "description": "Copy this URL into the Maqsam IVR/webhook configuration. Send the token as token query parameter, Bearer token, or X-Maqsam-Webhook-Token header.",
+   "description": "Copy this URL into the Maqsam IVR/webhook configuration. Send the token only in an HTTP header: X-Maqsam-Webhook-Token or Authorization: Bearer.",
    "fieldname": "incoming_webhook_url",
    "fieldtype": "Data",
    "label": "Incoming Webhook URL",

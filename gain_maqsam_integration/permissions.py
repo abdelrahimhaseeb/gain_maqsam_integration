@@ -93,12 +93,23 @@ def enforce_call_log_access(call_log: str, ptype: str = "read"):
     if not can_access_call_log(doc, ptype=ptype):
         frappe.throw("You can only access Maqsam call logs assigned to your agent.", frappe.PermissionError)
 
+    ptype = cstr(ptype or "read").lower()
+    if ptype == "write" and is_maqsam_agent() and not is_maqsam_superuser():
+        # Agents have no generic DocType write permission. Existing whitelisted
+        # methods call this helper first, then save with ignore_permissions=True
+        # for the specific business fields they are allowed to update.
+        return doc
+
     doc.check_permission(ptype)
     return doc
 
 
 def has_call_log_permission(doc, user: str | None = None, permission_type: str | None = None) -> bool:
-    return can_access_call_log(doc, ptype=permission_type or "read", user=user)
+    ptype = cstr(permission_type or "read").lower()
+    user = user or frappe.session.user
+    if ptype == "write" and is_maqsam_agent(user) and not is_maqsam_superuser(user):
+        return False
+    return can_access_call_log(doc, ptype=ptype, user=user)
 
 
 def call_log_query_conditions(user: str | None = None) -> str:
@@ -141,3 +152,15 @@ def can_read_document(doctype: str, name: str, user: str | None = None) -> bool:
         return bool(frappe.has_permission(doctype, "read", doc=doc, user=user or frappe.session.user))
     except Exception:
         return False
+
+
+
+def prevent_agent_direct_call_log_write(doc, method: str | None = None) -> None:
+    if getattr(doc.flags, "ignore_permissions", False):
+        return
+    user = frappe.session.user
+    if is_maqsam_agent(user) and not is_maqsam_superuser(user):
+        frappe.throw(
+            "Maqsam Agents must update call logs through Maqsam whitelisted actions.",
+            frappe.PermissionError,
+        )

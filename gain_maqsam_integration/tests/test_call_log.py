@@ -12,6 +12,7 @@ from gain_maqsam_integration.call_log import (
     sync_recent_calls,
     upsert_maqsam_call,
 )
+from gain_maqsam_integration.patches import dedupe_maqsam_call_id
 
 
 class TestParseTimestamp(unittest.TestCase):
@@ -114,6 +115,68 @@ class TestUpsertIdempotency(unittest.TestCase):
         _clear_duplicate_maqsam_call_id_message()
 
         self.assertEqual(frappe.local.message_log, [{"message": "Keep this message"}])
+
+    def test_existing_agent_email_terminal_state_duration_and_timestamp_are_preserved_from_partial_update(self):
+        first = {
+            "id": self.call_id,
+            "direction": "inbound",
+            "caller": "+966500000001",
+            "callee": "+966112223344",
+            "state": "ended",
+            "timestamp": "2026-04-27 20:30:00",
+            "duration": 75,
+            "agents": [{"email": "agent@example.com", "name": "Agent"}],
+        }
+        name, created = upsert_maqsam_call(first)
+        frappe.db.commit()
+        self.created_logs.append(name)
+        self.assertTrue(created)
+
+        second = {
+            "id": self.call_id,
+            "direction": "inbound",
+            "caller": "+966500000001",
+            "callee": "+966112223344",
+            "state": "ringing",
+        }
+        name2, created2 = upsert_maqsam_call(second)
+        frappe.db.commit()
+
+        self.assertEqual(name, name2)
+        self.assertFalse(created2)
+        values = frappe.db.get_value(
+            "Maqsam Call Log",
+            name,
+            ["agent_email", "state", "duration", "timestamp"],
+            as_dict=True,
+        )
+        self.assertEqual(values.agent_email, "agent@example.com")
+        self.assertEqual(values.state, "ended")
+        self.assertEqual(values.duration, 75)
+        self.assertEqual(str(values.timestamp), "2026-04-27 20:30:00")
+
+
+class TestDedupePatchSafety(unittest.TestCase):
+    def test_duplicate_maqsam_call_ids_raise_migration_blocker(self):
+        duplicate = frappe._dict(
+            {
+                "maqsam_call_id": "dup-call",
+                "duplicate_count": 2,
+                "call_logs": "MCL-00001, MCL-00002",
+            }
+        )
+
+        def fake_sql(query, *args, **kwargs):
+            if "GROUP BY maqsam_call_id" in query:
+                return [duplicate]
+            return []
+
+        with unittest.mock.patch.object(dedupe_maqsam_call_id.frappe.db, "table_exists", return_value=True),             unittest.mock.patch.object(dedupe_maqsam_call_id.frappe.db, "sql", side_effect=fake_sql):
+            with self.assertRaises(Exception) as ctx:
+                dedupe_maqsam_call_id.execute()
+
+        self.assertIn("duplicate call logs exist", str(ctx.exception))
+        self.assertIn("dup-call", str(ctx.exception))
 
 
 class TestSyncRecentCalls(unittest.TestCase):

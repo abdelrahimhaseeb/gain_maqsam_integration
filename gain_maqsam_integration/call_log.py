@@ -13,6 +13,19 @@ from frappe.utils import cint, cstr, get_datetime, now_datetime
 SYNC_SOURCE = "Maqsam Sync"
 CLICK_TO_CALL_SOURCE = "Gain Click-to-Call"
 CALL_LOG_DOCTYPE = "Maqsam Call Log"
+UPSERT_MAX_ATTEMPTS = 5
+UPSERT_RETRY_BACKOFF_SECONDS = 0.2
+TERMINAL_CALL_STATES = {
+    "ended",
+    "completed",
+    "answered",
+    "serviced",
+    "abandoned",
+    "dropped",
+    "no_answer",
+    "busy",
+    "failed",
+}
 
 
 PHONE_LINK_FIELDS = {
@@ -50,6 +63,53 @@ def _phone_match_score(left: Any, right: Any) -> int:
 
 def _phone_matches(left: Any, right: Any) -> bool:
     return _phone_match_score(left, right) >= 7
+
+
+def _normalize_state(state: Any) -> str:
+    return cstr(state).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _is_terminal_state(state: Any) -> bool:
+    return _normalize_state(state) in TERMINAL_CALL_STATES
+
+
+def _has_value(value: Any) -> bool:
+    return value not in (None, "")
+
+
+def _values_for_existing_call(doc, values: dict[str, Any], call: dict[str, Any]) -> dict[str, Any]:
+    protected = dict(values)
+
+    for fieldname in (
+        "agent_email",
+        "agent_name",
+        "caller_number",
+        "callee_number",
+        "normalized_phone",
+        "direction",
+        "call_type",
+    ):
+        if _has_value(doc.get(fieldname)) and not _has_value(protected.get(fieldname)):
+            protected.pop(fieldname, None)
+
+    existing_state = _normalize_state(doc.get("state"))
+    incoming_state = _normalize_state(protected.get("state"))
+    if existing_state and not incoming_state:
+        protected.pop("state", None)
+    elif _is_terminal_state(existing_state) and not _is_terminal_state(incoming_state):
+        protected.pop("state", None)
+        protected.pop("outcome", None)
+
+    if cint(doc.get("duration") or 0) > 0 and cint(protected.get("duration") or 0) <= 0:
+        protected.pop("duration", None)
+
+    if doc.get("timestamp") and call.get("timestamp") in (None, ""):
+        protected.pop("timestamp", None)
+
+    if doc.get("outcome"):
+        protected.pop("outcome", None)
+
+    return protected
 
 
 def _dump_payload(payload: Any) -> str:
@@ -312,7 +372,9 @@ def _build_values_from_maqsam_call(call: dict[str, Any]) -> dict[str, Any]:
     state = str(call.get("state") or "").strip().lower()
     direction = str(call.get("direction") or "unknown").strip().lower()
     agent_email, agent_name = _extract_agent(call)
-    link_context = find_linked_record_for_numbers([caller_number, callee_number])
+    link_context = find_linked_record_for_numbers(
+        [callee_number] if direction == "outbound" else [caller_number]
+    )
 
     return {
         "maqsam_call_id": str(call.get("id") or "").strip(),
@@ -338,53 +400,84 @@ def upsert_maqsam_call(call: dict[str, Any]) -> tuple[str | None, bool]:
     if not maqsam_call_id:
         return None, False
 
-    lock_key = f"maqsam_upsert_lock_{maqsam_call_id}"
-    for _ in range(10):
-        if not frappe.cache().get_value(lock_key):
-            frappe.cache().set_value(lock_key, 1, expires_in_sec=10)
-            break
-        time.sleep(0.5)
+    base_values = _build_values_from_maqsam_call(call)
+    last_lock_error: Exception | None = None
 
-    try:
-        values = _build_values_from_maqsam_call(call)
-        existing = frappe.db.exists(CALL_LOG_DOCTYPE, {"maqsam_call_id": maqsam_call_id})
-        created = not bool(existing)
-        doc = frappe.get_doc(CALL_LOG_DOCTYPE, existing) if existing else frappe.new_doc(CALL_LOG_DOCTYPE)
-
-        if not created and doc.source == CLICK_TO_CALL_SOURCE:
-            values.pop("source", None)
-
-        if doc.outcome:
-            values.pop("outcome", None)
-
-        doc.update(values)
+    for attempt in range(UPSERT_MAX_ATTEMPTS):
         try:
-            if created:
-                doc.insert(ignore_permissions=True)
-            else:
+            existing_rows = frappe.db.sql(
+                f"SELECT name FROM `tab{CALL_LOG_DOCTYPE}` WHERE maqsam_call_id = %s FOR UPDATE",
+                (maqsam_call_id,),
+                as_dict=True,
+            )
+
+            if existing_rows:
+                docname = existing_rows[0].name
+                if not frappe.db.exists(CALL_LOG_DOCTYPE, docname):
+                    continue
+                doc = frappe.get_doc(CALL_LOG_DOCTYPE, docname)
+
+                values = _values_for_existing_call(doc, base_values, call)
+                if doc.source == CLICK_TO_CALL_SOURCE:
+                    values.pop("source", None)
+
+                doc.update(values)
                 doc.save(ignore_permissions=True)
-            return doc.name, created
+                return doc.name, False
+
+            doc = frappe.new_doc(CALL_LOG_DOCTYPE)
+            doc.update(base_values)
+            doc.insert(ignore_permissions=True)
+            return doc.name, True
+
         except Exception as exc:
-            if not _is_duplicate_maqsam_call_id_error(exc):
-                raise
+            is_deadlock = False
+            message = cstr(exc).lower()
+            if getattr(exc, "args", None) and isinstance(exc.args, tuple) and len(exc.args) > 0:
+                code = getattr(exc.args[0], "args", [exc.args[0]])[0]
+                if code in (1213, 1205):
+                    is_deadlock = True
+            if "deadlock" in message or "lock wait timeout" in message:
+                is_deadlock = True
 
-            _clear_duplicate_maqsam_call_id_message()
-            existing = frappe.db.exists(CALL_LOG_DOCTYPE, {"maqsam_call_id": maqsam_call_id})
-            if not existing:
-                raise
+            if is_deadlock:
+                last_lock_error = exc
+                frappe.db.rollback()
+                if attempt < UPSERT_MAX_ATTEMPTS - 1:
+                    time.sleep(UPSERT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                    continue
+                break
 
-            doc = frappe.get_doc(CALL_LOG_DOCTYPE, existing)
-            if doc.source == CLICK_TO_CALL_SOURCE:
-                values.pop("source", None)
-            if doc.outcome:
-                values.pop("outcome", None)
-            doc.update(values)
-            doc.save(ignore_permissions=True)
-            _clear_duplicate_maqsam_call_id_message()
-            return doc.name, False
-    finally:
-        frappe.cache().delete_value(lock_key)
+            if _is_duplicate_maqsam_call_id_error(exc):
+                _clear_duplicate_maqsam_call_id_message()
+                frappe.db.rollback()
+                if attempt < UPSERT_MAX_ATTEMPTS - 1:
+                    time.sleep(UPSERT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                    continue
+                break
 
+            raise
+
+    if last_lock_error:
+        raise Exception(
+            f"Could not upsert Maqsam Call Log for call id {maqsam_call_id!r} "
+            f"after {UPSERT_MAX_ATTEMPTS} attempts due to database lock contention."
+        ) from last_lock_error
+
+    existing = frappe.db.exists(CALL_LOG_DOCTYPE, {"maqsam_call_id": maqsam_call_id})
+    if existing:
+        doc = frappe.get_doc(CALL_LOG_DOCTYPE, existing)
+        values = _values_for_existing_call(doc, base_values, call)
+        if doc.source == CLICK_TO_CALL_SOURCE:
+            values.pop("source", None)
+        doc.update(values)
+        doc.save(ignore_permissions=True)
+        return doc.name, False
+
+    raise Exception(
+        f"Could not upsert Maqsam Call Log for call id {maqsam_call_id!r} "
+        f"after {UPSERT_MAX_ATTEMPTS} attempts."
+    )
 
 def sync_recent_calls(calls: list[dict[str, Any]]) -> dict[str, Any]:
     created = 0

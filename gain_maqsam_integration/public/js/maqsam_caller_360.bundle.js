@@ -5,16 +5,20 @@
 	const RECENT_CALLS_LIMIT = 3;
 	const AGENT_ENABLED_KEY = "gain_maqsam_agent_enabled";
 	const INCOMING_AGENT_ROLES = ["Maqsam Agent", "System Manager"];
-	let lastEventKey = "";
-	let lastEventAt = 0;
+	const recentEventsCache = new Map();
 
 	function consumeEventKey(key) {
 		if (!key) return false;
-		if (key === lastEventKey && Date.now() - lastEventAt < RECENT_EVENT_TTL_MS) {
+		const now = Date.now();
+		for (const [k, timestamp] of recentEventsCache.entries()) {
+			if (now - timestamp > RECENT_EVENT_TTL_MS) {
+				recentEventsCache.delete(k);
+			}
+		}
+		if (recentEventsCache.has(key)) {
 			return false;
 		}
-		lastEventKey = key;
-		lastEventAt = Date.now();
+		recentEventsCache.set(key, now);
 		return true;
 	}
 
@@ -98,19 +102,18 @@
 
 	function stateBadge(state) {
 		const key = String(state || "").toLowerCase().replace(/[\s-]/g, "_");
-		const meta = STATE_LABELS[key] || { text: state || __("Unknown"), tone: "gray", icon: "•" };
-		// data-state preserves the raw key so handlers (outcome default,
-		// terminal-state checks) don't have to round-trip through the
-		// localized label text.
-		return `<span class="m360-state ${meta.tone}" data-state="${escapeHtml(key)}">${meta.icon} ${escapeHtml(meta.text)}</span>`;
+		const meta = STATE_LABELS[key] || { text: state || __("Unknown"), tone: "secondary", icon: "•" };
+		const bsTone = meta.tone === 'green' ? 'success' : meta.tone === 'orange' ? 'warning' : meta.tone === 'red' ? 'danger' : 'secondary';
+		return `<span class="badge badge-pill badge-${bsTone} bg-${bsTone} m360-state" data-state="${escapeHtml(key)}">${meta.icon} ${escapeHtml(meta.text)}</span>`;
 	}
 
-	function badge(text, tone = "gray") {
-		return `<span class="m360-badge ${tone}">${escapeHtml(text || "")}</span>`;
+	function badge(text, tone = "secondary") {
+		const bsTone = tone === 'green' ? 'success' : tone === 'orange' ? 'warning' : tone === 'blue' ? 'info' : tone === 'red' ? 'danger' : 'secondary';
+		return `<span class="badge badge-pill badge-${bsTone} bg-${bsTone}">${escapeHtml(text || "")}</span>`;
 	}
 
 	function empty(text) {
-		return `<div class="m360-empty">${escapeHtml(text)}</div>`;
+		return `<div class="text-muted text-center p-3 mb-2 bg-light rounded small border">${escapeHtml(text)}</div>`;
 	}
 
 	function renderMatches(matches, primary) {
@@ -121,13 +124,13 @@
 			.map((match) => {
 				const isPrimary = primary && match.doctype === primary.doctype && match.name === primary.name;
 				return `
-					<div class="m360-match ${isPrimary ? "primary" : ""}">
-						<div class="m360-match-info">
-							<div class="m360-match-title">
+					<div class="d-flex justify-content-between align-items-center p-2 mb-2 border rounded ${isPrimary ? "bg-success-light border-success" : "bg-white"}">
+						<div class="text-truncate mr-2">
+							<div class="font-weight-bold fw-bold font-md">
 								${routeLink(match.doctype, match.name, match.title || match.name)}
 								${isPrimary ? badge(__("Primary"), "green") : ""}
 							</div>
-							<div class="m360-muted">${escapeHtml(match.doctype)} · ${escapeHtml(match.matched_phone || match.source || "")}</div>
+							<div class="text-muted small">${escapeHtml(match.doctype)} · ${escapeHtml(match.matched_phone || match.source || "")}</div>
 						</div>
 						${match.status ? badge(match.status, "blue") : ""}
 					</div>
@@ -144,20 +147,20 @@
 		const total = (calls || []).length;
 		const rows = list
 			.map((call) => `
-				<div class="m360-row">
-					<div class="m360-call-info">
-						<div class="m360-strong">${routeLink("Maqsam Call Log", call.name, call.name)} · ${escapeHtml(call.direction || "")}</div>
-						<div class="m360-muted">${escapeHtml(call.timestamp_display || "")}${call.agent_email ? " · " + escapeHtml(call.agent_email) : ""}</div>
+				<div class="d-flex justify-content-between align-items-center p-2 border-bottom">
+					<div class="mr-2 text-truncate">
+						<div class="font-weight-bold fw-bold font-md">${routeLink("Maqsam Call Log", call.name, call.name)} · ${escapeHtml(call.direction || "")}</div>
+						<div class="text-muted small">${escapeHtml(call.timestamp_display || "")}${call.agent_email ? " · " + escapeHtml(call.agent_email) : ""}</div>
 					</div>
-					<div class="m360-call-right">
+					<div class="text-right text-end min-w-80px">
 						${badge(call.outcome || call.state || __("Unknown"), call.outcome === "Answered" ? "green" : "orange")}
-						<div class="m360-muted">${duration(call.duration)}</div>
+						<div class="text-muted small mt-1">${duration(call.duration)}</div>
 					</div>
 				</div>
 			`)
 			.join("");
 		const more = total > RECENT_CALLS_LIMIT
-			? `<a class="m360-link" href="/app/maqsam-call-log?caller_number=${encodeURIComponent(calls[0]?.caller_number || "")}">${__("View all calls ({0})", [total])}</a>`
+			? `<div class="text-center mt-2"><a class="btn btn-xs btn-link text-primary" href="/app/maqsam-call-log?caller_number=${encodeURIComponent(calls[0]?.caller_number || "")}">${__("View all calls ({0})", [total])}</a></div>`
 			: "";
 		return rows + more;
 	}
@@ -171,19 +174,19 @@
 			return empty(__("No invoices."));
 		}
 		const summary = `
-			<div class="m360-money-card">
+			<div class="d-flex justify-content-between align-items-center p-2 mb-2 rounded bg-warning-light border border-warning">
 				<div>
-					<div class="m360-muted">${__("Outstanding")}</div>
-					<div class="m360-money">${money(outstanding)}</div>
+					<div class="text-muted small">${__("Outstanding")}</div>
+					<div class="font-weight-bold fw-bold text-danger font-lg">${money(outstanding)}</div>
 				</div>
 				${badge(__("{0} unpaid", [unpaidCount]), unpaidCount ? "orange" : "green")}
 			</div>
 		`;
 		const list = recent
 			.map((invoice) => `
-				<div class="m360-row compact">
-					<div>${routeLink("Sales Invoice", invoice.name, invoice.name)}<div class="m360-muted">${escapeHtml(invoice.posting_date || "")}</div></div>
-					<div class="m360-call-right">${money(invoice.grand_total)}<div class="m360-muted">${escapeHtml(invoice.status || "")}</div></div>
+				<div class="d-flex justify-content-between align-items-center py-1">
+					<div><div class="font-weight-bold fw-bold">${routeLink("Sales Invoice", invoice.name, invoice.name)}</div><div class="text-muted small">${escapeHtml(invoice.posting_date || "")}</div></div>
+					<div class="text-right text-end"><div class="font-weight-bold fw-bold">${money(invoice.grand_total)}</div><div class="text-muted small">${escapeHtml(invoice.status || "")}</div></div>
 				</div>
 			`)
 			.join("");
@@ -200,18 +203,18 @@
 		const renderList = (rows) =>
 			rows
 				.map((appointment) => `
-					<div class="m360-row compact">
-						<div>${routeLink("Patient Appointment", appointment.name, appointment.name)}<div class="m360-muted">${escapeHtml(appointment.appointment_display || "")}</div></div>
+					<div class="d-flex justify-content-between align-items-center py-1">
+						<div><div class="font-weight-bold fw-bold">${routeLink("Patient Appointment", appointment.name, appointment.name)}</div><div class="text-muted small">${escapeHtml(appointment.appointment_display || "")}</div></div>
 						${badge(appointment.status || __("Unknown"), "blue")}
 					</div>
 				`)
 				.join("");
 		let html = "";
 		if (upcoming.length) {
-			html += `<div class="m360-subtitle">${__("Upcoming")}</div>${renderList(upcoming)}`;
+			html += `<div class="text-muted small text-uppercase font-weight-bold fw-bold mt-2 mb-1">${__("Upcoming")}</div>${renderList(upcoming)}`;
 		}
 		if (recent.length) {
-			html += `<div class="m360-subtitle">${__("Recent")}</div>${renderList(recent)}`;
+			html += `<div class="text-muted small text-uppercase font-weight-bold fw-bold mt-2 mb-1">${__("Recent")}</div>${renderList(recent)}`;
 		}
 		return html;
 	}
@@ -230,27 +233,21 @@
 				Contact: __("Open Contact"),
 			};
 			const label = labelMap[primary.doctype] || __("Open {0}", [primary.doctype]);
-			buttons.push(`<a class="m360-btn primary" href="${routeUrl(primary.doctype, primary.name)}">📂 ${escapeHtml(label)}</a>`);
+			buttons.push(`<a class="btn btn-primary btn-sm flex-fill mx-1 mb-2 d-flex align-items-center justify-content-center shadow-sm" href="${routeUrl(primary.doctype, primary.name)}"><span class="mr-1">📂</span> ${escapeHtml(label)}</a>`);
 
 			if (primary.doctype === "Patient") {
 				const url = `/app/patient-appointment/new?patient=${encodeURIComponent(primary.name)}`;
-				buttons.push(`<a class="m360-btn" href="${url}">📅 ${__("New Appointment")}</a>`);
+				buttons.push(`<a class="btn btn-light btn-sm flex-fill mx-1 mb-2 d-flex align-items-center justify-content-center border shadow-sm" href="${url}"><span class="mr-1">📅</span> ${__("New Appointment")}</a>`);
 			}
 		} else {
-			buttons.push(`<button type="button" class="m360-btn primary" data-new-doc="Patient" data-phone="${escapeHtml(phone)}">🩺 ${__("New Patient")}</button>`);
-			buttons.push(`<button type="button" class="m360-btn" data-new-doc="Lead" data-phone="${escapeHtml(phone)}">👤 ${__("New Lead")}</button>`);
+			buttons.push(`<button type="button" class="btn btn-primary btn-sm flex-fill mx-1 mb-2 d-flex align-items-center justify-content-center shadow-sm" data-new-doc="Patient" data-phone="${escapeHtml(phone)}"><span class="mr-1">🩺</span> ${__("New Patient")}</button>`);
+			buttons.push(`<button type="button" class="btn btn-light btn-sm flex-fill mx-1 mb-2 d-flex align-items-center justify-content-center border shadow-sm" data-new-doc="Lead" data-phone="${escapeHtml(phone)}"><span class="mr-1">👤</span> ${__("New Lead")}</button>`);
 		}
 
 		return buttons.join("");
 	}
 
 	function renderSkeletonBody(profile, ctx) {
-		// Compact skeleton for the lite/fast event: header + hero + answer
-		// hint + a single loading indicator. The data sections (matches,
-		// calls, invoices, appointments) are rendered only after the heavy
-		// profile arrives via `upgradeSkeletonWithProfile`, so we don't
-		// flash misleading "no records found" / "New Patient" actions
-		// before the matcher has actually run.
 		const summary = profile.profile_summary || {};
 		const phone = formatPhone(summary.input_phone);
 		const stateKey = String(ctx.state || "").toLowerCase().replace(/[\s-]/g, "_");
@@ -258,63 +255,59 @@
 		const callLogHref = ctx.callLog ? routeUrl("Maqsam Call Log", ctx.callLog) : "#";
 
 		return `
-			<div class="m360-header">
-				<div class="m360-header-left">
+			<div class="m360-header p-3 border-bottom bg-light d-flex justify-content-between align-items-center sticky-top">
+				<div class="d-flex align-items-center gap-2">
 					${stateBadge(ctx.state || "ringing")}
-					<span class="m360-timer" data-timer>00:00</span>
+					<span class="m360-timer font-weight-bold fw-bold text-dark font-md ml-2" data-timer>00:00</span>
 				</div>
-				<div class="m360-header-right">
-					<button class="m360-icon-btn ${isRingtoneMuted() ? "muted" : ""}" data-mute-toggle title="${
-						isRingtoneMuted()
-							? __("Unmute ringtone")
-							: __("Mute ringtone (drawer still appears)")
-					}" aria-label="${__("Mute ringtone")}">${isRingtoneMuted() ? "🔕" : "🔔"}</button>
-					<button class="m360-close" data-close aria-label="${__("Close")}">×</button>
+				<div class="d-flex align-items-center gap-1">
+					<button class="btn btn-sm btn-icon ${isRingtoneMuted() ? "text-warning" : "text-secondary"} p-1" data-mute-toggle title="${isRingtoneMuted() ? __("Unmute ringtone") : __("Mute ringtone")}" aria-label="${__("Mute ringtone")}">${isRingtoneMuted() ? "🔕" : "🔔"}</button>
+					<button class="btn btn-sm btn-icon text-secondary p-1" data-close aria-label="${__("Close")}">✖</button>
 				</div>
 			</div>
 
-			<div class="m360-hero unknown">
-				<div class="m360-name">${escapeHtml(summary.display_name || __("Looking up caller…"))}</div>
-				<div class="m360-phone">${escapeHtml(phone || summary.input_phone || "")}</div>
-				<div class="m360-meta">
+			<div class="p-4 bg-light rounded text-center m-3 shadow-sm border border-warning" style="background: linear-gradient(135deg, #fef3c7, #fffbeb);">
+				<div class="h5 mb-1 font-weight-bolder fw-bolder text-dark">${escapeHtml(summary.display_name || __("Looking up caller…"))}</div>
+				<div class="text-secondary small font-weight-bold fw-bold mb-2">${escapeHtml(phone || summary.input_phone || "")}</div>
+				<div class="d-flex justify-content-center flex-wrap gap-2 mt-2">
 					${badge(__("Loading"), "blue")}
 				</div>
 			</div>
 
-				<div class="m360-answer-hint ${isAfterCall ? "hidden" : ""}" data-answer-hint>
-					<span class="m360-answer-hint-text">${__("Answer and end the call inside Maqsam")}</span>
-					<button type="button" class="m360-btn primary" data-open-dialer>${__("Show Dialer")}</button>
-				</div>
+			<div class="m360-answer-hint ${isAfterCall ? "d-none" : "d-flex"} align-items-center justify-content-between alert alert-info mx-3 py-2 px-3 shadow-sm border-0">
+				<span class="small font-weight-bold fw-bold mr-2 text-info" style="line-height: 1.2;">${__("Answer and end the call inside Maqsam")}</span>
+				<button type="button" class="btn btn-info btn-sm font-weight-bold fw-bold" data-open-dialer>${__("Show Dialer")}</button>
+			</div>
 
-			<div class="m360-after-call ${isAfterCall ? "show" : ""}" data-after-call>
-				<div class="m360-after-title">
-					<strong>${__("After Call")}</strong>
-					<span data-after-call-state>${escapeHtml(ctx.state || "")}</span>
+			<div class="m360-after-call ${isAfterCall ? "d-block" : "d-none"} mx-3 mb-3 p-3 bg-light border rounded shadow-sm" data-after-call>
+				<div class="d-flex align-items-center justify-content-between mb-2">
+					<strong class="text-dark small">${__("After Call")}</strong>
+					<span class="text-muted small font-weight-bold fw-bold" data-after-call-state>${escapeHtml(ctx.state || "")}</span>
 				</div>
-				<div class="m360-after-duration" data-final-duration></div>
-				<div class="m360-after-actions">
-					${ctx.callLog ? `<button type="button" class="m360-btn primary" data-save-outcome>${__("Save Outcome / Note")}</button>` : ""}
-					<button type="button" class="m360-btn" data-close-after-call>${__("Done")}</button>
+				<div class="mb-3 font-weight-bold fw-bold text-dark font-md" data-final-duration></div>
+				<div class="d-flex gap-2">
+					${ctx.callLog ? `<button type="button" class="btn btn-primary btn-sm flex-fill font-weight-bold fw-bold" data-save-outcome>${__("Save Outcome / Note")}</button>` : ""}
+					<button type="button" class="btn btn-light btn-sm flex-fill border font-weight-bold fw-bold shadow-sm" data-close-after-call>${__("Done")}</button>
 				</div>
 			</div>
 
-			<div class="m360-actions">
-				<a class="m360-btn ghost" href="${callLogHref}">${__("Call Log")}</a>
+			<div class="d-flex flex-wrap mx-2 mb-3">
+				<a class="btn btn-light btn-sm flex-fill mx-1 mb-2 border shadow-sm" href="${callLogHref}">${__("Call Log")}</a>
 			</div>
 
 			${ctx.callLog ? `
-				<div class="m360-tag-row">
-					<button type="button" class="m360-tag" data-tag="Wrong Number">🚫 ${__("Wrong Number")}</button>
-					<button type="button" class="m360-tag" data-tag="Spam">⛔ ${__("Spam")}</button>
+				<div class="d-flex gap-2 mx-3 mb-3">
+					<button type="button" class="btn btn-danger-light btn-sm flex-fill border border-danger text-danger font-weight-bold fw-bold shadow-sm" data-tag="Wrong Number">🚫 ${__("Wrong Number")}</button>
+					<button type="button" class="btn btn-danger-light btn-sm flex-fill border border-danger text-danger font-weight-bold fw-bold shadow-sm" data-tag="Spam">⛔ ${__("Spam")}</button>
 				</div>
 			` : ""}
 
-			<section class="m360-section m360-skeleton-block">
-				<div class="m360-skeleton-row"></div>
-				<div class="m360-skeleton-row"></div>
-				<div class="m360-skeleton-row"></div>
-				<div class="m360-skeleton-hint">${__("Fetching caller history…")}</div>
-			</section>
+			<div class="m360-skeleton-block p-3">
+				<div class="m360-skeleton-row rounded bg-light mb-2" style="height:14px; width:65%; animation: pulse 1.5s infinite;"></div>
+				<div class="m360-skeleton-row rounded bg-light mb-2" style="height:14px; width:80%; animation: pulse 1.5s infinite;"></div>
+				<div class="m360-skeleton-row rounded bg-light mb-3" style="height:14px; width:50%; animation: pulse 1.5s infinite;"></div>
+				<div class="text-muted small text-center">${__("Fetching caller history…")}</div>
+			</div>
 		`;
 	}
 
@@ -337,74 +330,97 @@
 		const isAfterCall = TERMINAL_STATES.has(stateKey);
 
 		return `
-			<div class="m360-header">
-				<div class="m360-header-left">
+			<div class="m360-header p-3 border-bottom bg-light d-flex justify-content-between align-items-center sticky-top">
+				<div class="d-flex align-items-center gap-2">
 					${stateBadge(ctx.state || "ringing")}
-					<span class="m360-timer" data-timer>00:00</span>
+					<span class="m360-timer ml-2 font-weight-bold fw-bold text-dark font-md" data-timer>00:00</span>
 				</div>
-				<button class="m360-close" data-close aria-label="${__("Close")}">×</button>
+				<button class="btn btn-sm btn-icon text-secondary p-1" data-close aria-label="${__("Close")}">✖</button>
 			</div>
 
-			<div class="m360-hero ${known ? "known" : "unknown"}">
-				<div class="m360-name">${escapeHtml(summary.display_name || __("Unknown Caller"))}</div>
-				<div class="m360-phone">${escapeHtml(phone || summary.input_phone || "")}</div>
-				<div class="m360-meta">
+			<div class="p-4 mt-3 mx-3 mb-2 rounded text-center shadow-sm border ${known ? "border-success" : "border-warning"}" style="background: ${known ? "linear-gradient(135deg, #f0fdfa, #f8fafc)" : "linear-gradient(135deg, #fef3c7, #fffbeb)"};">
+				<div class="h5 mb-1 font-weight-bolder fw-bolder text-dark">${escapeHtml(summary.display_name || __("Unknown Caller"))}</div>
+				<div class="text-secondary small font-weight-bold fw-bold mb-2">${escapeHtml(phone || summary.input_phone || "")}</div>
+				<div class="d-flex justify-content-center flex-wrap gap-2 mt-2">
 					${badge(summary.display_type || __("Unknown"), known ? "green" : "orange")}
 					${badge(__("{0} matches", [summary.match_count || 0]), "blue")}
 					${summary.last_outcome ? badge(summary.last_outcome, "orange") : ""}
 				</div>
 			</div>
 
-				<div class="m360-answer-hint ${isAfterCall ? "hidden" : ""}" data-answer-hint>
-					<span class="m360-answer-hint-text">${__("Answer and end the call inside Maqsam")}</span>
-					<button type="button" class="m360-btn primary" data-open-dialer>${__("Show Dialer")}</button>
-				</div>
+			<div class="m360-answer-hint ${isAfterCall ? "d-none" : "d-flex"} align-items-center justify-content-between alert alert-info mx-3 py-2 px-3 shadow-sm border-0">
+				<span class="small font-weight-bold fw-bold mr-2 text-info" style="line-height: 1.2;">${__("Answer and end the call inside Maqsam")}</span>
+				<button type="button" class="btn btn-info btn-sm font-weight-bold fw-bold" data-open-dialer>${__("Show Dialer")}</button>
+			</div>
 
-			<div class="m360-after-call ${isAfterCall ? "show" : ""}" data-after-call>
-				<div class="m360-after-title">
-					<strong>${__("After Call")}</strong>
-					<span data-after-call-state>${escapeHtml(ctx.state || "")}</span>
+			<div class="m360-after-call ${isAfterCall ? "d-block" : "d-none"} mx-3 mb-3 p-3 bg-light border rounded shadow-sm" data-after-call>
+				<div class="d-flex align-items-center justify-content-between mb-2">
+					<strong class="text-dark small">${__("After Call")}</strong>
+					<span class="text-muted small font-weight-bold fw-bold" data-after-call-state>${escapeHtml(ctx.state || "")}</span>
 				</div>
-				<div class="m360-after-duration" data-final-duration></div>
-				<div class="m360-after-actions">
-					${ctx.callLog ? `<button type="button" class="m360-btn primary" data-save-outcome>${__("Save Outcome / Note")}</button>` : ""}
-					<button type="button" class="m360-btn" data-close-after-call>${__("Done")}</button>
+				<div class="mb-3 font-weight-bold fw-bold text-dark font-md" data-final-duration></div>
+				<div class="d-flex gap-2">
+					${ctx.callLog ? `<button type="button" class="btn btn-primary btn-sm flex-fill font-weight-bold fw-bold" data-save-outcome>${__("Save Outcome / Note")}</button>` : ""}
+					<button type="button" class="btn btn-light btn-sm flex-fill border shadow-sm font-weight-bold fw-bold" data-close-after-call>${__("Done")}</button>
 				</div>
 			</div>
 
-			<div class="m360-actions">${renderActions(profile)}
-				<a class="m360-btn ghost" href="${callLogHref}">${__("Call Log")}</a>
+			<div class="d-flex flex-wrap mx-2 mb-3">
+				${renderActions(profile)}
+				<a class="btn btn-light btn-sm flex-fill mx-1 mb-2 border shadow-sm" href="${callLogHref}">${__("Call Log")}</a>
 			</div>
 
 			${ctx.callLog ? `
-				<div class="m360-quick-row">
-					<button type="button" class="m360-btn small" data-save-outcome>📝 ${__("Add Note / Outcome")}</button>
-				</div>
-				<div class="m360-tag-row">
-					<button type="button" class="m360-tag" data-tag="Wrong Number">🚫 ${__("Wrong Number")}</button>
-					<button type="button" class="m360-tag" data-tag="Spam">⛔ ${__("Spam")}</button>
+				<div class="mx-3 mb-3">
+					<button type="button" class="btn btn-success-light btn-sm w-100 mb-2 border border-success text-success font-weight-bold fw-bold shadow-sm d-flex justify-content-center align-items-center" data-save-outcome>
+						<span class="mr-1">📝</span> ${__("Add Note / Outcome")}
+					</button>
+					<div class="d-flex gap-2">
+						<button type="button" class="btn btn-danger-light btn-sm flex-fill border border-danger text-danger font-weight-bold fw-bold shadow-sm" data-tag="Wrong Number">🚫 ${__("Wrong Number")}</button>
+						<button type="button" class="btn btn-danger-light btn-sm flex-fill border border-danger text-danger font-weight-bold fw-bold shadow-sm" data-tag="Spam">⛔ ${__("Spam")}</button>
+					</div>
 				</div>
 			` : ""}
 
-			<section class="m360-section">
-				<h4>${__("Matched Records")}${matches.length > 1 ? ` <span class="m360-count">${matches.length}</span>` : ""}</h4>
-				${renderMatches(matches, primary)}
-			</section>
+			<div class="px-3">
+				<div class="card mb-3 shadow-sm border-0">
+					<div class="card-header bg-white border-bottom-0 pt-3 pb-1">
+						<h6 class="mb-0 font-weight-bold fw-bold text-dark d-flex align-items-center">${__("Matched Records")}${matches.length > 1 ? ` <span class="badge badge-info rounded-pill ml-2">${matches.length}</span>` : ""}</h6>
+					</div>
+					<div class="card-body p-3 pt-0">
+						${renderMatches(matches, primary)}
+					</div>
+				</div>
 
-			<section class="m360-section">
-				<h4>${__("Recent Calls")}</h4>
-				${renderRecentCalls(profile.recent_calls)}
-			</section>
+				<div class="card mb-3 shadow-sm border-0">
+					<div class="card-header bg-white border-bottom-0 pt-3 pb-1">
+						<h6 class="mb-0 font-weight-bold fw-bold text-dark">${__("Recent Calls")}</h6>
+					</div>
+					<div class="card-body p-3 pt-0">
+						${renderRecentCalls(profile.recent_calls)}
+					</div>
+				</div>
 
-			<details class="m360-section collapsible" ${hasInvoices ? "open" : ""}>
-				<summary><h4>${__("Invoices")}${(invoices.unpaid_count || 0) > 0 ? ` <span class="m360-count orange">${invoices.unpaid_count}</span>` : ""}</h4></summary>
-				${renderInvoicesCompact(invoices)}
-			</details>
+				${hasInvoices ? `
+				<div class="card mb-3 shadow-sm border-0">
+					<div class="card-header bg-white border-bottom-0 pt-3 pb-1">
+						<h6 class="mb-0 font-weight-bold fw-bold d-flex align-items-center text-dark">${__("Invoices")}${(invoices.unpaid_count || 0) > 0 ? ` <span class="badge badge-warning rounded-pill ml-2 text-dark">${invoices.unpaid_count}</span>` : ""}</h6>
+					</div>
+					<div class="card-body p-3 pt-0">
+						${renderInvoicesCompact(invoices)}
+					</div>
+				</div>` : ""}
 
-			<details class="m360-section collapsible" ${hasApt ? "open" : ""}>
-				<summary><h4>${__("Appointments")}${(apt.upcoming || []).length ? ` <span class="m360-count">${apt.upcoming.length}</span>` : ""}</h4></summary>
-				${renderAppointmentsCompact(apt)}
-			</details>
+				${hasApt ? `
+				<div class="card mb-4 shadow-sm border-0">
+					<div class="card-header bg-white border-bottom-0 pt-3 pb-1">
+						<h6 class="mb-0 font-weight-bold fw-bold d-flex align-items-center text-dark">${__("Appointments")}${(apt.upcoming || []).length ? ` <span class="badge badge-info rounded-pill ml-2">${apt.upcoming.length}</span>` : ""}</h6>
+					</div>
+					<div class="card-body p-3 pt-0">
+						${renderAppointmentsCompact(apt)}
+					</div>
+				</div>` : ""}
+			</div>
 		`;
 	}
 
@@ -413,95 +429,22 @@
 		const style = document.createElement("style");
 		style.id = "m360-styles";
 		style.textContent = `
-			.m360-drawer { position: fixed; top: 70px; inset-inline-end: 16px; width: 400px; max-width: calc(100vw - 32px); max-height: calc(100vh - 100px); background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; box-shadow: 0 24px 48px rgba(15,23,42,.18), 0 4px 12px rgba(15,23,42,.08); z-index: 1050; overflow: hidden; display: flex; flex-direction: column; color: #0f172a; font-size: 13px; animation: m360-slide-in .25s ease-out; }
+			.m360-drawer { position: fixed; top: 70px; right: 16px; inset-inline-end: 16px; width: 400px; max-width: calc(100vw - 32px); max-height: calc(100vh - 100px); background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; box-shadow: 0 24px 48px rgba(15,23,42,.18), 0 4px 12px rgba(15,23,42,.08); z-index: 1050; overflow: hidden; display: flex; flex-direction: column; color: #0f172a; font-size: 13px; animation: m360-slide-in .25s ease-out; }
 			@keyframes m360-slide-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
 			.m360-drawer.closing { animation: m360-slide-out .2s ease-in forwards; }
 			@keyframes m360-slide-out { to { opacity: 0; transform: translateX(20px); } }
-			.m360-drawer * { box-sizing: border-box; }
-			.m360-drawer-body { overflow-y: auto; padding: 0 14px 14px; flex: 1; }
-			.m360-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid #f1f5f9; background: #fafbfc; }
-			.m360-header-left { display: flex; gap: 10px; align-items: center; }
-			.m360-timer { font-variant-numeric: tabular-nums; font-weight: 700; color: #475569; font-size: 14px; }
-			.m360-close { border: 0; background: transparent; font-size: 22px; line-height: 1; cursor: pointer; color: #64748b; padding: 4px 10px; border-radius: 8px; }
-			.m360-close:hover { background: #f1f5f9; color: #0f172a; }
-			.m360-header-right { display: flex; gap: 4px; align-items: center; }
-			.m360-icon-btn { border: 0; background: transparent; font-size: 16px; line-height: 1; cursor: pointer; color: #64748b; padding: 4px 8px; border-radius: 8px; transition: background .15s; }
-			.m360-icon-btn:hover { background: #f1f5f9; color: #0f172a; }
-			.m360-icon-btn.muted { color: #b45309; background: #fef3c7; }
-			.m360-icon-btn.muted:hover { background: #fde68a; }
-			.m360-hero { padding: 14px; border-radius: 12px; margin: 12px 0; background: linear-gradient(135deg, #f0fdfa, #f8fafc); border: 1px solid #d9e2dc; }
-			.m360-hero.unknown { background: linear-gradient(135deg, #fef3c7, #fffbeb); border-color: #fde68a; }
-			.m360-name { font-size: 18px; font-weight: 800; line-height: 1.2; }
-			.m360-phone { color: #475569; font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
-			.m360-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-			.m360-answer-hint { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; margin-bottom: 12px; background: linear-gradient(135deg, #ecfeff, #f0fdfa); border: 1px solid #99f6e4; border-radius: 10px; font-size: 12px; color: #0f766e; font-weight: 600; }
-			.m360-answer-hint.hidden { display: none; }
-			.m360-answer-hint-text { flex: 1; min-width: 0; }
-			.m360-answer-hint .m360-btn { padding: 6px 10px; font-size: 12px; flex-shrink: 0; }
-			.m360-answer-hint .m360-btn:disabled { cursor: default; opacity: .85; }
-			.m360-after-call { display: none; padding: 10px 12px; margin-bottom: 12px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; }
-			.m360-after-call.show { display: block; }
-			.m360-after-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #334155; font-size: 12px; margin-bottom: 8px; }
-			.m360-after-title span { color: #64748b; }
-			.m360-after-duration { font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 10px; font-variant-numeric: tabular-nums; }
-			.m360-after-duration:empty { display: none; }
-			.m360-after-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-			.m360-after-actions .m360-btn { padding: 8px 10px; font-size: 12px; }
-			.m360-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
-			.m360-actions .m360-btn:first-child:nth-last-child(odd) { grid-column: 1 / -1; }
-			.m360-btn { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 12px; border-radius: 10px; border: 1px solid #e5e7eb; background: #fff; color: #0f172a; font-weight: 600; text-decoration: none; cursor: pointer; transition: all .15s; font-size: 13px; }
-			.m360-btn:hover { background: #f8fafc; border-color: #cbd5e1; text-decoration: none; }
-			.m360-btn.primary { background: #0f766e; color: #fff; border-color: #0f766e; }
-			.m360-btn.primary:hover { background: #115e59; color: #fff; }
-			.m360-btn.ghost { background: transparent; }
-			.m360-section { margin-bottom: 14px; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; background: #fff; }
-			.m360-section h4 { margin: 0 0 8px; font-size: 13px; font-weight: 800; color: #0f172a; display: inline-flex; align-items: center; gap: 6px; }
-			.m360-section.collapsible { padding: 0; }
-			.m360-section.collapsible > summary { padding: 12px; cursor: pointer; list-style: none; }
-			.m360-section.collapsible > summary::-webkit-details-marker { display: none; }
-			.m360-section.collapsible > summary::after { content: "▾"; float: right; color: #94a3b8; transition: transform .2s; }
-			.m360-section.collapsible[open] > summary::after { transform: rotate(180deg); }
-			.m360-section.collapsible > *:not(summary) { padding: 0 12px 12px; }
-			.m360-count { background: #e0f2fe; color: #075985; border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 700; }
-			.m360-count.orange { background: #ffedd5; color: #9a3412; }
-			.m360-match, .m360-row { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
-			.m360-match:last-child, .m360-row:last-child { border-bottom: 0; }
-			.m360-match.primary { background: #ecfdf5; border: 1px solid #bbf7d0; border-radius: 8px; padding: 9px; margin-bottom: 6px; }
-			.m360-match-info, .m360-call-info { min-width: 0; flex: 1; }
-			.m360-match-title, .m360-strong { font-weight: 700; }
-			.m360-muted { color: #64748b; font-size: 11px; line-height: 1.5; margin-top: 2px; }
-			.m360-call-right { text-align: end; min-width: 80px; }
-			.m360-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 10px; font-weight: 700; background: #f1f5f9; color: #475569; white-space: nowrap; }
-			.m360-badge.green { background: #dcfce7; color: #166534; }
-			.m360-badge.orange { background: #ffedd5; color: #9a3412; }
-			.m360-badge.blue { background: #dbeafe; color: #1d4ed8; }
-			.m360-badge.red { background: #fee2e2; color: #991b1b; }
-			.m360-state { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; background: #f1f5f9; color: #475569; }
-			.m360-state.green { background: #dcfce7; color: #166534; animation: m360-pulse 2s infinite; }
-			.m360-state.orange { background: #ffedd5; color: #9a3412; animation: m360-pulse 1s infinite; }
-			.m360-state.red { background: #fee2e2; color: #991b1b; }
-			@keyframes m360-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .6; } }
-			.m360-empty { color: #94a3b8; background: #f8fafc; border-radius: 8px; padding: 10px; font-size: 12px; text-align: center; }
-			.m360-money-card { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 10px; background: #fff7ed; margin-bottom: 8px; }
-			.m360-money { font-size: 16px; font-weight: 800; color: #9a3412; }
-			.m360-subtitle { margin: 8px 0 4px; color: #334155; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
-			.m360-row.compact { padding: 6px 0; }
-			.m360-link { display: block; padding: 8px 0 0; text-align: center; font-size: 12px; color: #0f766e; font-weight: 600; }
-			.m360-quick-row { display: flex; gap: 6px; margin-bottom: 8px; }
-			.m360-quick-row .m360-btn { flex: 1; padding: 7px 10px; font-size: 12px; background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
-			.m360-quick-row .m360-btn:hover { background: #dcfce7; border-color: #86efac; }
-			.m360-tag-row { display: flex; gap: 6px; margin-bottom: 12px; }
-			.m360-tag { flex: 1; padding: 6px 8px; border-radius: 8px; border: 1px solid #fecaca; background: #fff; color: #991b1b; font-size: 11px; font-weight: 600; cursor: pointer; transition: all .15s; }
-			.m360-tag:hover { background: #fee2e2; border-color: #fca5a5; }
-			[dir="rtl"] .m360-drawer { animation-name: m360-slide-in-rtl; }
-			@keyframes m360-slide-in-rtl { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
-			.m360-skeleton-block { padding: 12px; }
-			.m360-skeleton-row { height: 14px; border-radius: 6px; background: linear-gradient(90deg, #f1f5f9, #e2e8f0, #f1f5f9); background-size: 200% 100%; animation: m360-skel 1.4s linear infinite; margin-bottom: 8px; }
-			.m360-skeleton-row:nth-child(1) { width: 65%; }
-			.m360-skeleton-row:nth-child(2) { width: 80%; }
-			.m360-skeleton-row:nth-child(3) { width: 50%; }
-			.m360-skeleton-hint { color: #94a3b8; font-size: 11px; text-align: center; margin-top: 6px; }
-			@keyframes m360-skel { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+			.m360-drawer-body { overflow-y: auto; flex: 1; margin-bottom: 20px;}
+			.bg-success-light { background-color: #ecfdf5 !important; }
+			.bg-warning-light { background-color: #fffbeb !important; }
+			.bg-danger-light { background-color: #fef2f2 !important; }
+			.btn-danger-light { background-color: #fee2e2; color: #991b1b; }
+			.btn-danger-light:hover { background-color: #fca5a5; }
+			.btn-success-light { background-color: #dcfce7; color: #166534; }
+			.btn-success-light:hover { background-color: #bbf7d0; }
+			.min-w-80px { min-width: 80px; }
+			.gap-1 { gap: 0.25rem; }
+			.gap-2 { gap: 0.5rem; }
+			@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 		`;
 		document.head.appendChild(style);
 	}
@@ -545,7 +488,7 @@
 	function setRingtoneMuted(muted) {
 		try {
 			localStorage.setItem(RINGTONE_MUTED_KEY, muted ? "1" : "0");
-		} catch (_) {}
+		} catch (_) { }
 		if (muted) stopRingtone();
 		// Update any open drawer's mute button without re-rendering everything.
 		if (activeDrawer) {
@@ -577,7 +520,7 @@
 		const context = getAudioContext();
 		if (!context) return;
 		if (context.state === "suspended") {
-			context.resume().catch(() => {});
+			context.resume().catch(() => { });
 		}
 		audioContextPrimed = true;
 	}
@@ -599,7 +542,7 @@
 			activeRingtone.oscillator.stop();
 			activeRingtone.oscillator.disconnect();
 			activeRingtone.gain?.disconnect();
-		} catch (_) {}
+		} catch (_) { }
 		// Don't close the shared context — we reuse it for the next call.
 		activeRingtone = null;
 	}
@@ -613,7 +556,7 @@
 			const context = getAudioContext();
 			if (!context) return;
 			if (context.state === "suspended") {
-				context.resume().catch(() => {});
+				context.resume().catch(() => { });
 			}
 			const oscillator = context.createOscillator();
 			const gain = context.createGain();
@@ -630,7 +573,7 @@
 			}, 500);
 			activeRingtone = { oscillator, gain, beat };
 			setTimeout(stopRingtone, 12000);
-		} catch (_) {}
+		} catch (_) { }
 	}
 
 	function closeDrawer(drawer) {
@@ -809,9 +752,9 @@
 				args: { call_log: callLog, doctype, docname },
 				freeze: false,
 				silent: true,
-				error: () => {},
+				error: () => { },
 			});
-		} catch (_) {}
+		} catch (_) { }
 	}
 
 	function wireDrawerHandlers(drawer, ctx) {
@@ -1337,7 +1280,7 @@
 			} catch (_) {
 				try {
 					socket.connect();
-				} catch (_) {}
+				} catch (_) { }
 			}
 		}
 		registerRealtime();

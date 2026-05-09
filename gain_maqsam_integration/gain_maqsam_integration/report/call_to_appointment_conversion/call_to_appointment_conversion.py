@@ -5,11 +5,15 @@ from typing import Any
 import frappe
 from frappe import _
 
-from gain_maqsam_integration.permissions import get_call_log_report_scope, only_maqsam_user
+from gain_maqsam_integration.permissions import get_call_log_report_scope, is_maqsam_superuser
 
 
 def execute(filters: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    only_maqsam_user()
+    if not is_maqsam_superuser():
+        frappe.throw(
+            _("Only System Manager or Maqsam Supervisor can access this report."),
+            frappe.PermissionError,
+        )
     filters = filters or {}
     if not frappe.db.exists("DocType", "Patient Appointment"):
         frappe.throw(_("This report requires the Healthcare app (Patient Appointment doctype)."))

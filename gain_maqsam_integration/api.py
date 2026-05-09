@@ -51,6 +51,11 @@ TERMINAL_CALL_STATES = {
     "busy",
     "failed",
 }
+WEBHOOK_MAX_CONTENT_LENGTH = 64 * 1024
+WEBHOOK_MAX_SERIALIZED_PAYLOAD_LENGTH = 128 * 1024
+WEBHOOK_MAX_AGENTS = 10
+WEBHOOK_ALLOWED_DIRECTIONS = {"inbound", "outbound", "internal", "unknown"}
+WEBHOOK_PHONE_FIELDS = ("caller", "callerNumber", "callee", "calleeNumber", "from", "to", "phone")
 
 
 def _only_system_manager() -> None:
@@ -95,6 +100,90 @@ def _get_incoming_webhook_token() -> str:
         return cstr(settings.get("incoming_webhook_token")).strip()
 
 
+def _get_request_header(name: str) -> str:
+    request = getattr(frappe.local, "request", None)
+    headers = getattr(request, "headers", None) or {}
+    lowered = name.lower()
+
+    getter = getattr(headers, "get", None)
+    if callable(getter):
+        value = getter(name) or getter(lowered) or getter(name.upper())
+        if value:
+            return cstr(value).strip()
+
+    items = getattr(headers, "items", None)
+    if callable(items):
+        for key, value in items():
+            if cstr(key).lower() == lowered:
+                return cstr(value).strip()
+
+    return ""
+
+
+def _ensure_webhook_request_shape() -> None:
+    if not _maqsam_integration_enabled():
+        frappe.throw("Maqsam integration is disabled.", frappe.PermissionError)
+
+    request = getattr(frappe.local, "request", None)
+    if not request:
+        frappe.throw("Maqsam webhook requires an HTTP POST request.", frappe.PermissionError)
+
+    if cstr(getattr(request, "method", "")).upper() != "POST":
+        frappe.throw("Maqsam webhook requires POST.", frappe.PermissionError)
+
+    # Header-only token transport avoids shared secrets leaking through access
+    # logs, browser history, referrers, and Frappe form_dict snapshots.
+    if cstr((frappe.form_dict or {}).get("token")).strip():
+        frappe.throw("Maqsam webhook token must be sent in an HTTP header.", frappe.PermissionError)
+
+    content_length = _get_request_header("Content-Length")
+    if content_length:
+        try:
+            length = int(content_length)
+        except ValueError:
+            frappe.throw("Invalid Maqsam webhook Content-Length.")
+        if length > WEBHOOK_MAX_CONTENT_LENGTH:
+            frappe.throw("Maqsam webhook payload is too large.")
+
+
+def _validate_webhook_payload(payload: dict[str, Any], call: dict[str, Any]) -> None:
+    if not isinstance(payload, dict) or not isinstance(call, dict):
+        frappe.throw("Maqsam webhook payload must be a JSON object.")
+
+    try:
+        serialized_size = len(json.dumps(payload, default=str).encode("utf-8"))
+    except Exception:
+        frappe.throw("Maqsam webhook payload must be JSON serializable.")
+
+    if serialized_size > WEBHOOK_MAX_SERIALIZED_PAYLOAD_LENGTH:
+        frappe.throw("Maqsam webhook payload is too large.")
+
+    call_id = cstr(call.get("id")).strip()
+    if not call_id:
+        frappe.throw("Maqsam webhook payload does not include a call id.")
+    if len(call_id) > 128:
+        frappe.throw("Maqsam webhook call id is too long.")
+
+    direction = cstr(call.get("direction") or call.get("type")).strip().lower()
+    if direction and direction not in WEBHOOK_ALLOWED_DIRECTIONS:
+        frappe.throw("Maqsam webhook direction is invalid.")
+
+    state = _normalize_call_state(call.get("state"))
+    if len(state) > 64:
+        frappe.throw("Maqsam webhook state is too long.")
+
+    for fieldname in WEBHOOK_PHONE_FIELDS:
+        value = call.get(fieldname)
+        if value not in (None, "") and len(cstr(value)) > 64:
+            frappe.throw(f"Maqsam webhook field {fieldname} is too long.")
+
+    agents = call.get("agents")
+    if isinstance(agents, list) and len(agents) > WEBHOOK_MAX_AGENTS:
+        frappe.throw("Maqsam webhook includes too many agents.")
+    if agents not in (None, "") and not isinstance(agents, (list, dict)):
+        frappe.throw("Maqsam webhook agents must be an object or list.")
+
+
 def _get_request_payload() -> dict[str, Any]:
     payload: Any = {}
     if getattr(frappe.local, "request", None):
@@ -116,15 +205,14 @@ def _get_request_payload() -> dict[str, Any]:
 
 
 def _get_request_token() -> str:
-    token = cstr((frappe.form_dict or {}).get("token")).strip()
-    if token:
-        return token
+    for header in ("X-Maqsam-Webhook-Token", "X-Webhook-Token"):
+        token = _get_request_header(header)
+        if token:
+            return token
 
-    if getattr(frappe.local, "request", None):
-        for header in ("X-Maqsam-Webhook-Token", "X-Webhook-Token"):
-            token = cstr(frappe.request.headers.get(header)).strip()
-            if token:
-                return token
+    authorization = _get_request_header("Authorization")
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
 
     return ""
 
@@ -345,21 +433,62 @@ def _find_current_call_context_from_maqsam_calls(
             continue
 
         maqsam_call_id = cstr(call.get("id")).strip()
+        agent_email = _extract_agent_email({}, call)
         log_name = (
             frappe.db.get_value("Maqsam Call Log", {"maqsam_call_id": maqsam_call_id}, "name")
             if maqsam_call_id
             else None
         )
+        if not log_name and not is_maqsam_superuser():
+            continue
+
+        if log_name:
+            row = frappe._dict(
+                {
+                    "name": log_name,
+                    "direction": direction,
+                    "state": state,
+                    "agent_email": agent_email,
+                }
+            )
+            if not _can_show_current_call_to_user(row):
+                continue
 
         return {
             "call_log": log_name,
             "maqsam_call_id": maqsam_call_id,
-            "agent_email": _extract_agent_email({}, call),
+            "agent_email": agent_email,
             "state": state,
             "direction": direction,
             "phone": phone,
             "active": not terminal,
         }
+
+    return {}
+
+
+def _shared_current_call_profile_allowed(context: dict[str, Any]) -> bool:
+    if is_maqsam_superuser():
+        return True
+    if not context.get("call_log"):
+        return False
+    return cstr(context.get("direction")).strip().lower() == "inbound"
+
+
+def _attach_current_call_profile(context: dict[str, Any]) -> dict[str, Any]:
+    phone = context.get("phone")
+    if not phone:
+        context["profile"] = {}
+        return context
+
+    call_log = context.get("call_log")
+    if call_log and can_access_call_log(call_log, ptype="read"):
+        context["profile"] = get_caller_profile(call_log=call_log)
+        return context
+
+    if _shared_current_call_profile_allowed(context):
+        context["profile"] = get_caller_profile(phone=phone)
+        return context
 
     return {}
 
@@ -693,9 +822,7 @@ def maqsam_get_current_call_profile(sync: int = 1) -> dict[str, Any]:
     if not context:
         return {}
 
-    phone = context.get("phone")
-    context["profile"] = get_caller_profile(phone=phone) if phone else {}
-    return context
+    return _attach_current_call_profile(context)
 
 
 @frappe.whitelist()
@@ -816,6 +943,7 @@ def maqsam_receive_call_event() -> dict[str, Any]:
     original_form_dict = getattr(frappe.local, "form_dict", None)
     original_request = getattr(frappe.local, "request", None)
     try:
+        _ensure_webhook_request_shape()
         expected_token = _get_incoming_webhook_token()
         received_token = _get_request_token()
         if not expected_token or not received_token or not hmac.compare_digest(received_token, expected_token):
@@ -823,8 +951,7 @@ def maqsam_receive_call_event() -> dict[str, Any]:
 
         payload = _get_request_payload()
         call = _extract_webhook_call(payload)
-        if not call.get("id"):
-            frappe.throw("Maqsam webhook payload does not include a call id.")
+        _validate_webhook_payload(payload, call)
 
         if frappe.flags.in_test:
             return _maqsam_receive_call_event_sync(payload, call)
@@ -994,7 +1121,7 @@ def maqsam_tag_call(call_log: str, label: str, reason: str | None = None) -> dic
     doc.outcome = "Wrong Number" if label == "Wrong Number" else "Other"
     note_line = f"[{label}] {cstr(reason).strip()}".strip()
     doc.notes = "\n".join(filter(None, [doc.notes, note_line]))
-    doc.save()
+    doc.save(ignore_permissions=True)
 
     customer_phone = doc.caller_number if doc.direction == "inbound" else doc.callee_number
     digits = re.sub(r"\D", "", cstr(customer_phone))
@@ -1153,7 +1280,7 @@ def maqsam_update_call_outcome(
     doc.notes = cstr(notes).strip() or doc.notes
     doc.follow_up_required = 1 if int(follow_up_required or 0) else 0
     doc.follow_up_date = follow_up_date if doc.follow_up_required else None
-    doc.save()
+    doc.save(ignore_permissions=True)
     return {"ok": True, "call_log": doc.name}
 
 
@@ -1171,7 +1298,7 @@ def maqsam_link_call_to_record(call_log: str, doctype: str, docname: str) -> dic
     doc.linked_doctype = doctype
     doc.linked_docname = docname
     doc.linked_title = target.get_title()
-    doc.save()
+    doc.save(ignore_permissions=True)
     return {
         "ok": True,
         "call_log": doc.name,

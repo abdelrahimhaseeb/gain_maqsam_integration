@@ -18,6 +18,9 @@ from gain_maqsam_integration.api import (
 from gain_maqsam_integration.gain_maqsam_integration.report.agent_performance_daily.agent_performance_daily import (
     execute as execute_agent_performance_daily,
 )
+from gain_maqsam_integration.gain_maqsam_integration.report.call_to_appointment_conversion.call_to_appointment_conversion import (
+    execute as execute_call_to_appointment_conversion,
+)
 from gain_maqsam_integration.permissions import (
     MAQSAM_AGENT_ROLE,
     MAQSAM_SUPERVISOR_ROLE,
@@ -216,6 +219,34 @@ class TestMaqsamCallLogOwnership(unittest.TestCase):
         with self.assertRaises(frappe.PermissionError):
             maqsam_update_call_outcome(self.call_log, outcome="Follow Up", notes="blocked")
 
+    def test_agent_cannot_directly_save_call_log_fields(self):
+        frappe.set_user(self.agent_owner)
+        doc = frappe.get_doc("Maqsam Call Log", self.call_log)
+        doc.state = "tampered"
+        with self.assertRaises(frappe.PermissionError):
+            doc.save()
+        frappe.db.rollback()
+
+    def test_agent_business_update_still_works_through_whitelisted_method(self):
+        frappe.set_user(self.agent_owner)
+        result = maqsam_update_call_outcome(
+            self.call_log,
+            outcome="Follow Up",
+            notes="call back",
+            follow_up_required=1,
+            follow_up_date=today(),
+        )
+        self.assertTrue(result["ok"])
+        values = frappe.db.get_value(
+            "Maqsam Call Log",
+            self.call_log,
+            ["outcome", "notes", "follow_up_required", "follow_up_date"],
+            as_dict=True,
+        )
+        self.assertEqual(values.outcome, "Follow Up")
+        self.assertIn("call back", values.notes)
+        self.assertEqual(values.follow_up_required, 1)
+
     def test_supervisor_can_access_org_wide_call_log(self):
         frappe.set_user(self.supervisor)
         self.assertTrue(can_access_call_log(self.call_log, ptype="read"))
@@ -264,6 +295,11 @@ class TestMaqsamCallLogOwnership(unittest.TestCase):
         manager_rows = {row.agent_email for row in data}
         self.assertIn(self.agent_owner, manager_rows)
         self.assertIn(self.agent_other, manager_rows)
+
+    def test_agent_cannot_run_call_to_appointment_conversion_report(self):
+        frappe.set_user(self.agent_owner)
+        with self.assertRaises(frappe.PermissionError):
+            execute_call_to_appointment_conversion({"from_date": today(), "to_date": today()})
 
     def test_agent_direct_phone_lookup_requires_call_context(self):
         frappe.set_user(self.agent_owner)
@@ -359,6 +395,29 @@ class TestMaqsamCallLogOwnership(unittest.TestCase):
         self.assertEqual(current["phone"], phone)
         self.assertFalse(current["active"])
         self.assertEqual(current["profile"]["profile_summary"]["input_phone"], phone)
+
+    def test_agent_raw_maqsam_fallback_without_call_log_is_not_profile_lookup(self):
+        raw_call = {
+            "id": f"perm-raw-nosync-{frappe.generate_hash(length=8)}",
+            "direction": "inbound",
+            "caller": self.owner_phone,
+            "callee": "+966115200879",
+            "state": "ringing",
+            "timestamp": int(time()),
+        }
+
+        class FakeClient:
+            def list_calls(self, page=1):
+                return [raw_call]
+
+        frappe.set_user(self.agent_other)
+        with patch("gain_maqsam_integration.api.get_client", return_value=FakeClient()), patch(
+            "gain_maqsam_integration.api.sync_recent_calls",
+            return_value={"created": 0, "updated": 0, "logs": [], "created_inbound": []},
+        ), patch("gain_maqsam_integration.api._find_current_call_context_from_logs", return_value={}):
+            current = maqsam_get_current_call_profile(sync=1)
+
+        self.assertEqual(current, {})
 
     def test_caller_profile_recent_calls_exclude_unowned_call_logs(self):
         hidden_log = self._make_call_log(
