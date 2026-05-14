@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
+from gain_maqsam_integration.profile import calls as profile_calls
 from gain_maqsam_integration.caller_profile import (
     _phone_suffix,
     digits_only,
@@ -41,3 +43,17 @@ class TestPhoneMatches(unittest.TestCase):
     def test_blank_returns_false(self):
         self.assertFalse(phone_matches("", "123"))
         self.assertFalse(phone_matches("123", None))
+
+class TestRecentCallsQueryShape(unittest.TestCase):
+    def test_exact_match_uses_or_across_caller_callee_and_normalized(self):
+        with patch(
+            "gain_maqsam_integration.profile.calls.frappe.get_all",
+            side_effect=[[], []],
+        ) as get_all_mock:
+            profile_calls.get_recent_calls("+966500123456")
+
+        first_call_kwargs = get_all_mock.call_args_list[0].kwargs
+        self.assertFalse(first_call_kwargs.get("filters"))
+        self.assertIn(["caller_number", "in", ["+966500123456", "966500123456"]], first_call_kwargs["or_filters"])
+        self.assertIn(["callee_number", "in", ["+966500123456", "966500123456"]], first_call_kwargs["or_filters"])
+        self.assertIn(["normalized_phone", "in", ["+966500123456", "966500123456"]], first_call_kwargs["or_filters"])

@@ -84,14 +84,28 @@ def _match_standard_doctype(
         if meta.has_field(field)
     ]
 
-    or_filters = [[field, "like", f"%{suffix}%"] for field in available_fields]
-    records = frappe.get_all(
-        doctype,
-        fields=["name", *available_fields, *extra_fields],
-        or_filters=or_filters,
-        limit=50,
-        ignore_permissions=True,
-    )
+    # Pass 1 – exact IN match (benefits from existing column indexes).
+    exact_numbers = [n for n in lookup_numbers if n]
+    records: list[Any] = []
+    if exact_numbers:
+        records = frappe.get_all(
+            doctype,
+            fields=["name", *available_fields, *extra_fields],
+            or_filters=[[field, "in", exact_numbers] for field in available_fields],
+            limit=50,
+            ignore_permissions=True,
+        )
+
+    # Pass 2 – suffix LIKE fallback only when exact pass found nothing.
+    if not records:
+        records = frappe.get_all(
+            doctype,
+            fields=["name", *available_fields, *extra_fields],
+            or_filters=[[field, "like", f"%{suffix}%"] for field in available_fields],
+            limit=50,
+            ignore_permissions=True,
+        )
+
     for record in records:
         for field in available_fields:
             value = record.get(field)
@@ -128,13 +142,28 @@ def _match_contact_child_numbers(
     if not suffix:
         return
 
-    rows = frappe.get_all(
-        "Contact Phone",
-        fields=["parent", "phone"],
-        filters={"parenttype": "Contact", "phone": ["like", f"%{suffix}%"]},
-        limit=50,
-        ignore_permissions=True,
-    )
+    # Pass 1 – exact IN match.
+    exact_numbers = [n for n in lookup_numbers if n]
+    rows: list[Any] = []
+    if exact_numbers:
+        rows = frappe.get_all(
+            "Contact Phone",
+            fields=["parent", "phone"],
+            filters={"parenttype": "Contact", "phone": ["in", exact_numbers]},
+            limit=50,
+            ignore_permissions=True,
+        )
+
+    # Pass 2 – suffix LIKE fallback.
+    if not rows:
+        rows = frappe.get_all(
+            "Contact Phone",
+            fields=["parent", "phone"],
+            filters={"parenttype": "Contact", "phone": ["like", f"%{suffix}%"]},
+            limit=50,
+            ignore_permissions=True,
+        )
+
     for row in rows:
         if phone_matches_any(row.phone, lookup_numbers):
             _append_match(

@@ -34,19 +34,38 @@ def get_recent_calls(phone: str, limit: int = 10) -> list[dict[str, Any]]:
     if not suffix:
         return []
 
-    or_filters = [
-        ["caller_number", "like", f"%{suffix}%"],
-        ["callee_number", "like", f"%{suffix}%"],
-        ["normalized_phone", "like", f"%{suffix}%"],
-    ]
-    rows = frappe.get_all(
-        "Maqsam Call Log",
-        fields=CALL_LOG_FIELDS,
-        or_filters=or_filters,
-        order_by="timestamp desc, creation desc",
-        limit=limit * 3,
-        ignore_permissions=True,
-    )
+    # Pass 1 – exact equality on the digits-only form (uses index if present).
+    exact_numbers = [n for n in lookup_numbers if n]
+    rows: list[Any] = []
+    if exact_numbers:
+        rows = frappe.get_all(
+            "Maqsam Call Log",
+            fields=CALL_LOG_FIELDS,
+            or_filters=[
+                ["caller_number", "in", exact_numbers],
+                ["callee_number", "in", exact_numbers],
+                ["normalized_phone", "in", exact_numbers],
+            ],
+            order_by="timestamp desc, creation desc",
+            limit=limit * 3,
+            ignore_permissions=True,
+        )
+
+    # Pass 2 – suffix LIKE fallback only when exact pass returned nothing.
+    if not rows:
+        rows = frappe.get_all(
+            "Maqsam Call Log",
+            fields=CALL_LOG_FIELDS,
+            or_filters=[
+                ["caller_number", "like", f"%{suffix}%"],
+                ["callee_number", "like", f"%{suffix}%"],
+                ["normalized_phone", "like", f"%{suffix}%"],
+            ],
+            order_by="timestamp desc, creation desc",
+            limit=limit * 3,
+            ignore_permissions=True,
+        )
+
     calls: list[dict[str, Any]] = []
     for row in rows:
         if not can_access_call_log(row, ptype="read"):

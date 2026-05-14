@@ -892,8 +892,7 @@ def _process_maqsam_webhook_payload_async(payload: dict[str, Any], call: dict[st
     original_user = frappe.session.user
     frappe.set_user("Administrator")
     try:
-        log_name, created = upsert_maqsam_call(call)
-        frappe.db.commit()
+        log_name, created = upsert_maqsam_call(call, commit=True)
         agent_email = _extract_agent_email(payload, call)
 
         _publish_fast_notification(log_name, call, agent_email)
@@ -909,8 +908,7 @@ def _maqsam_receive_call_event_sync(payload: dict[str, Any], call: dict[str, Any
     original_user = frappe.session.user
     frappe.set_user("Administrator")
     try:
-        log_name, created = upsert_maqsam_call(call)
-        frappe.db.commit()
+        log_name, created = upsert_maqsam_call(call, commit=True)
         agent_email = _extract_agent_email(payload, call)
 
         _publish_fast_notification(log_name, call, agent_email)
@@ -984,12 +982,14 @@ def _is_blocked(phone: str) -> bool:
 
 
 def _resolve_popup_target_users(agent_email: str, settings) -> list[str]:
-    """Pick which user(s) should receive the realtime popup for this call.
+    """Return enabled Maqsam Agent users who should receive realtime popups.
 
-    Inbound-call handling is a shared service-desk workflow: any available
-    Maqsam Agent should see the caller profile even if Maqsam already attached
-    the call to a specific agent email. Ownership checks on call-log actions
-    still protect write/update/recording operations.
+    Current PROJ-0011 service-desk policy intentionally broadcasts active
+    inbound popup notifications to every enabled user with the Maqsam Agent
+    role, even when Maqsam includes a routed agent email. This only controls
+    transient popup visibility; historical call logs, recordings, direct phone
+    lookup, reports, and mutation APIs remain scoped by the existing permission
+    guards such as ``enforce_call_log_access``.
     """
     return _get_broadcast_users()
 

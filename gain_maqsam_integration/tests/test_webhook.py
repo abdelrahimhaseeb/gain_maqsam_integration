@@ -422,6 +422,52 @@ class TestWebhookConcurrency(unittest.TestCase):
         self.assertEqual(res.get("call_log"), log_name)
         self.assertEqual(frappe.db.get_value("Maqsam Call Log", log_name, "state"), "in_progress")
 
+    def test_repeated_deadlock_uses_existing_row_after_retry_exhaustion(self):
+        call_id = f"deadlock-existing-{frappe.generate_hash(length=8)}"
+        log_name, created = upsert_maqsam_call(
+            {
+                "id": call_id,
+                "caller": "+966500000099",
+                "callee": "+966112223344",
+                "state": "ringing",
+                "direction": "inbound",
+                "timestamp": "2026-04-27 20:30:00",
+            }
+        )
+        frappe.db.commit()
+        self.created_logs.append(log_name)
+        self.assertTrue(created)
+
+        payload = {
+            "id": call_id,
+            "caller": "+966500000099",
+            "callee": "+966112223344",
+            "state": "in_progress",
+            "direction": "inbound",
+            "timestamp": "2026-04-27 20:31:00",
+        }
+        self._set_request("test-token-with-32-plus-chars-54321", payload)
+
+        original_sql = frappe.db.sql
+
+        def mock_sql(query, *args, **kwargs):
+            if "FOR UPDATE" in query and call_id in str(args):
+                e = Exception("Lock wait timeout exceeded; try restarting transaction")
+                e.args = (1205, "Lock wait timeout...")
+                raise e
+            return original_sql(query, *args, **kwargs)
+
+        with patch("gain_maqsam_integration.call_log.frappe.db.sql", side_effect=mock_sql), patch(
+            "gain_maqsam_integration.call_log.time.sleep",
+            return_value=None,
+        ):
+            res = maqsam_receive_call_event()
+
+        self.assertTrue(res.get("ok"))
+        self.assertFalse(res.get("created"))
+        self.assertEqual(res.get("call_log"), log_name)
+        self.assertEqual(frappe.db.get_value("Maqsam Call Log", log_name, "state"), "in_progress")
+
     def test_repeated_deadlock_raises_visible_failure(self):
         call_id = f"deadlock-exhaust-{frappe.generate_hash(length=8)}"
         payload = {

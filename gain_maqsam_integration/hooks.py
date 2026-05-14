@@ -11,6 +11,7 @@ required_apps = ["erpnext"]
 app_include_js = [
 	"maqsam_caller_360.bundle.js",
 	"maqsam_floating_dialer.bundle.js",
+	"maqsam_whatsapp.bundle.js",
 ]
 
 doctype_js = {
@@ -21,6 +22,7 @@ doctype_js = {
 	"Customer": "public/js/maqsam_click_to_call.bundle.js",
 	"Patient": "public/js/maqsam_click_to_call.bundle.js",
 	"Patient Appointment": "public/js/maqsam_click_to_call.bundle.js",
+	"Maqsam WhatsApp Conversation": "public/js/maqsam_whatsapp_conversation.bundle.js",
 }
 
 doctype_list_js = {
@@ -36,10 +38,14 @@ override_doctype_dashboards = {
 
 permission_query_conditions = {
     "Maqsam Call Log": "gain_maqsam_integration.permissions.call_log_query_conditions",
+    "Maqsam WhatsApp Conversation": "gain_maqsam_integration.maqsam_whatsapp.permissions.whatsapp_conversation_query_conditions",
+    "Maqsam WhatsApp Message": "gain_maqsam_integration.maqsam_whatsapp.permissions.whatsapp_message_query_conditions",
 }
 
 has_permission = {
     "Maqsam Call Log": "gain_maqsam_integration.permissions.has_call_log_permission",
+    "Maqsam WhatsApp Conversation": "gain_maqsam_integration.maqsam_whatsapp.permissions.has_whatsapp_conversation_permission",
+    "Maqsam WhatsApp Message": "gain_maqsam_integration.maqsam_whatsapp.permissions.has_whatsapp_message_permission",
 }
 
 doc_events = {
