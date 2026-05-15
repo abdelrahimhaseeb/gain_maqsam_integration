@@ -13,7 +13,11 @@ from gain_maqsam_integration.permissions import (
     is_maqsam_superuser,
     only_maqsam_user,
 )
-from gain_maqsam_integration.maqsam_whatsapp.client import get_client, normalize_whatsapp_phone
+from gain_maqsam_integration.maqsam_whatsapp.client import (
+    get_client,
+    get_default_whatsapp_country_code,
+    validate_whatsapp_phone,
+)
 from gain_maqsam_integration.maqsam_whatsapp.permissions import can_access_whatsapp_record
 
 PHONE_FIELDS = (
@@ -450,8 +454,10 @@ def maqsam_whatsapp_send_template(
     )
     variables_payload = _parse_json(variables, default={})
     client = get_client()
-    normalizer = getattr(client, "normalize_whatsapp_phone", None)
-    normalized_phone = normalizer(recipient_phone) if callable(normalizer) else normalize_whatsapp_phone(recipient_phone)
+    normalized_phone = validate_whatsapp_phone(
+        recipient_phone,
+        base_client=getattr(client, "base_client", None),
+    )
 
     request_payload = client._build_send_payload(
         phone=normalized_phone,
@@ -600,16 +606,19 @@ def maqsam_whatsapp_get_defaults(doctype: str, docname: str) -> dict[str, Any]:
         variable_defaults["name"] = cstr(doc.get("customer_name") or doc.get("first_name") or getattr(doc, "name", ""))
 
     client = get_client()
+    country_code = get_default_whatsapp_country_code()
     normalized_candidates: list[str] = []
     seen: set[str] = set()
-
-    normalizer = getattr(client, "normalize_whatsapp_phone", client.normalize_phone)
 
     for candidate in candidates:
         if not candidate:
             continue
         try:
-            val = normalizer(candidate)
+            val = validate_whatsapp_phone(
+                candidate,
+                base_client=getattr(client, "base_client", None),
+                default_country_code=country_code,
+            )
             if val and val not in seen:
                 seen.add(val)
                 normalized_candidates.append(val)

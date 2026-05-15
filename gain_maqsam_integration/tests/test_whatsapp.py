@@ -11,10 +11,11 @@ from gain_maqsam_integration.permissions import MAQSAM_AGENT_ROLE, MAQSAM_SUPERV
 from gain_maqsam_integration.maqsam_whatsapp import api as whatsapp_api
 from gain_maqsam_integration.maqsam_whatsapp.api import (
     maqsam_whatsapp_get_conversation,
+    maqsam_whatsapp_get_defaults,
     maqsam_whatsapp_list_templates,
     maqsam_whatsapp_send_template,
 )
-from gain_maqsam_integration.maqsam_whatsapp.client import MaqsamWhatsAppClient
+from gain_maqsam_integration.maqsam_whatsapp.client import MaqsamWhatsAppClient, normalize_whatsapp_phone
 
 
 class FakeWhatsAppClient:
@@ -107,6 +108,7 @@ class TestMaqsamWhatsAppBackend(unittest.TestCase):
         frappe.set_user("Administrator")
         if not frappe.db.exists("DocType", "Maqsam Settings"):
             raise unittest.SkipTest("Maqsam Settings doctype not installed")
+        frappe.reload_doc("gain_maqsam_integration", "doctype", "maqsam_settings", force=True)
         ensure_role(MAQSAM_AGENT_ROLE)
         ensure_role(MAQSAM_SUPERVISOR_ROLE)
         ensure_whatsapp_doctypes()
@@ -114,7 +116,9 @@ class TestMaqsamWhatsAppBackend(unittest.TestCase):
     def setUp(self):
         frappe.set_user("Administrator")
         self.original_enabled = frappe.db.get_single_value("Maqsam Settings", "enabled")
+        self.original_country_code = frappe.db.get_single_value("Maqsam Settings", "default_whatsapp_country_code")
         frappe.db.set_single_value("Maqsam Settings", "enabled", 1)
+        frappe.db.set_single_value("Maqsam Settings", "default_whatsapp_country_code", "+966")
         self.created_users: list[str] = []
         self.created_messages: list[str] = []
         self.created_conversations: list[str] = []
@@ -127,6 +131,7 @@ class TestMaqsamWhatsAppBackend(unittest.TestCase):
     def tearDown(self):
         frappe.set_user("Administrator")
         frappe.db.set_single_value("Maqsam Settings", "enabled", self.original_enabled or 0)
+        frappe.db.set_single_value("Maqsam Settings", "default_whatsapp_country_code", self.original_country_code or "+966")
         for name in self.created_messages:
             if name and frappe.db.exists("Maqsam WhatsApp Message", name):
                 frappe.delete_doc("Maqsam WhatsApp Message", name, ignore_permissions=True, force=True)
@@ -222,6 +227,46 @@ class TestMaqsamWhatsAppBackend(unittest.TestCase):
         self.assertEqual(json.loads(payload["TemplateVariables"]), {"name": "Patient"})
         self.assertNotIn("Language", payload)
         self.assertNotIn("ConversationId", payload)
+
+    def test_settings_validates_default_whatsapp_country_code(self):
+        settings = frappe.get_single("Maqsam Settings")
+        settings.timeout_seconds = 30
+
+        with patch(
+            "gain_maqsam_integration.gain_maqsam_integration.doctype.maqsam_settings.maqsam_settings.MaqsamSettings._validate_webhook_token",
+            lambda self: None,
+        ):
+            settings.default_whatsapp_country_code = "966"
+            settings.validate()
+            self.assertEqual(settings.default_whatsapp_country_code, "+966")
+
+            settings.default_whatsapp_country_code = "+0"
+            with self.assertRaises(frappe.ValidationError):
+                settings.validate()
+
+    def test_phone_normalizer_handles_local_international_and_accidental_plus_zero(self):
+        self.assertEqual(normalize_whatsapp_phone("0564348436"), "+966564348436")
+        self.assertEqual(normalize_whatsapp_phone("564348436"), "+966564348436")
+        self.assertEqual(normalize_whatsapp_phone("+0564348436"), "+966564348436")
+        self.assertEqual(normalize_whatsapp_phone("00966564348436"), "+966564348436")
+        self.assertEqual(normalize_whatsapp_phone("+966564348436"), "+966564348436")
+        self.assertEqual(normalize_whatsapp_phone("12345678"), "")
+
+    def test_phone_normalizer_uses_configured_default_country_code(self):
+        frappe.db.set_single_value("Maqsam Settings", "default_whatsapp_country_code", "+971")
+
+        self.assertEqual(normalize_whatsapp_phone("0500000002"), "+971500000002")
+        self.assertEqual(normalize_whatsapp_phone("500000002"), "+971500000002")
+
+    def test_client_never_sends_accidental_plus_zero_to_provider(self):
+        base = RecordingBaseClient()
+        client = MaqsamWhatsAppClient(base_client=base)
+
+        client.send_template_message(phone="+0564348436", template_id="tpl-plus-zero")
+
+        payload = base.calls[0]["kwargs"]["form_payload"]
+        self.assertEqual(payload["RecipientPhone"], "+966564348436")
+        self.assertNotEqual(payload["RecipientPhone"], "+0564348436")
 
     def test_supervisor_can_force_template_sync_but_response_is_safe(self):
         template_id = f"tpl-{frappe.generate_hash(length=8)}"
@@ -345,6 +390,57 @@ class TestMaqsamWhatsAppBackend(unittest.TestCase):
         self.assertIn("RecipientPhone", message.request_payload)
         self.assertIn("tpl-supervisor", message.request_payload)
         self.assertIn("msg-1", message.response_payload)
+
+    def test_supervisor_accidental_plus_zero_phone_is_normalized_before_provider(self):
+        fake = FakeWhatsAppClient()
+        self._make_template("tpl-plus-zero-send")
+        frappe.set_user(self.supervisor)
+        with patch("gain_maqsam_integration.maqsam_whatsapp.api.get_client", return_value=fake):
+            result = maqsam_whatsapp_send_template(
+                template_id="tpl-plus-zero-send",
+                phone="+0564348436",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(fake.sent[0]["phone"], "+966564348436")
+        self.created_messages.append(result["message"])
+        self.created_conversations.append(result["conversation"])
+        message = frappe.get_doc("Maqsam WhatsApp Message", result["message"])
+        self.assertEqual(message.recipient_phone, "+966564348436")
+        self.assertIn("+966564348436", message.request_payload)
+        self.assertNotIn("+0564348436", message.request_payload)
+
+    def test_invalid_phone_is_rejected_before_provider_and_message_log(self):
+        fake = FakeWhatsAppClient()
+        self._make_template("tpl-invalid-phone")
+        before_count = frappe.db.count("Maqsam WhatsApp Message")
+
+        frappe.set_user(self.supervisor)
+        with patch("gain_maqsam_integration.maqsam_whatsapp.api.get_client", return_value=fake):
+            with self.assertRaises(frappe.ValidationError):
+                maqsam_whatsapp_send_template(
+                    template_id="tpl-invalid-phone",
+                    phone="+0123",
+                )
+
+        self.assertEqual(fake.sent, [])
+        self.assertEqual(frappe.db.count("Maqsam WhatsApp Message"), before_count)
+
+    def test_defaults_normalize_plus_zero_and_skip_invalid_candidates(self):
+        fake = FakeWhatsAppClient()
+        lead_name = self._make_lead()
+
+        frappe.set_user("Administrator")
+        with patch("gain_maqsam_integration.maqsam_whatsapp.api.get_client", return_value=fake), patch(
+            "gain_maqsam_integration.maqsam_whatsapp.api._get_reference_phone_candidates",
+            return_value=["+0564348436", "+0123", "+966500000008"],
+        ):
+            result = maqsam_whatsapp_get_defaults("Lead", lead_name)
+
+        self.assertIn("+966564348436", result["phone_candidates"])
+        self.assertIn("+966500000008", result["phone_candidates"])
+        self.assertNotIn("+0564348436", result["phone_candidates"])
+        self.assertNotIn("+0123", result["phone_candidates"])
 
     def test_send_response_is_sanitized_but_raw_response_is_audited(self):
         fake = FakeWhatsAppClient(

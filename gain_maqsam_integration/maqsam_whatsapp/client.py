@@ -10,31 +10,139 @@ import frappe
 from gain_maqsam_integration.maqsam_client import get_client as get_base_client
 
 
-def normalize_whatsapp_phone(phone: str, base_client: Any | None = None) -> str:
+E164_PHONE_RE = re.compile(r"^\+[1-9]\d{7,14}$")
+COUNTRY_CODE_RE = re.compile(r"^\+[1-9]\d{0,2}$")
+DEFAULT_WHATSAPP_COUNTRY_CODE = "+966"
+LOCAL_MOBILE_WITHOUT_TRUNK_RE = re.compile(r"^5\d{8}$")
+
+
+def _digits(value: Any) -> str:
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def normalize_default_country_code(value: Any) -> str:
+    digits = _digits(value)
+    if digits.startswith("00"):
+        digits = digits[2:]
+    if not digits:
+        return ""
+
+    candidate = f"+{digits}"
+    return candidate if COUNTRY_CODE_RE.fullmatch(candidate) else ""
+
+
+def get_default_whatsapp_country_code() -> str:
+    try:
+        value = frappe.db.get_single_value("Maqsam Settings", "default_whatsapp_country_code")
+    except Exception:
+        value = ""
+
+    if value in (None, ""):
+        return DEFAULT_WHATSAPP_COUNTRY_CODE
+
+    normalized = normalize_default_country_code(value)
+    if not normalized:
+        frappe.throw(
+            "Default WhatsApp Country Code must be a valid country calling code like +966.",
+            frappe.ValidationError,
+        )
+    return normalized
+
+
+def _strip_trunk_zero_after_country(digits: str, country_digits: str) -> str:
+    trunk_prefix = f"{country_digits}0"
+    if digits.startswith(trunk_prefix):
+        return f"{country_digits}{digits[len(trunk_prefix):]}"
+    return digits
+
+
+def _valid_e164_from_digits(digits: str) -> str:
+    candidate = f"+{digits}"
+    return candidate if E164_PHONE_RE.fullmatch(candidate) else ""
+
+
+def _normalize_value_to_whatsapp_e164(value: Any, default_country_code: str) -> str:
+    raw = str(value or "").strip()
+    digits = _digits(raw)
+    if not digits:
+        return ""
+
+    country_code = normalize_default_country_code(default_country_code) or DEFAULT_WHATSAPP_COUNTRY_CODE
+    country_digits = _digits(country_code)
+
+    if raw.startswith("+"):
+        if digits.startswith("0"):
+            return _valid_e164_from_digits(f"{country_digits}{digits[1:]}")
+        return _valid_e164_from_digits(_strip_trunk_zero_after_country(digits, country_digits))
+
+    if digits.startswith("00"):
+        international_digits = digits[2:]
+        return _valid_e164_from_digits(_strip_trunk_zero_after_country(international_digits, country_digits))
+
+    if digits.startswith(country_digits):
+        return _valid_e164_from_digits(_strip_trunk_zero_after_country(digits, country_digits))
+
+    if digits.startswith("0") and len(digits) > 1:
+        return _valid_e164_from_digits(f"{country_digits}{digits[1:]}")
+
+    if LOCAL_MOBILE_WITHOUT_TRUNK_RE.fullmatch(digits):
+        return _valid_e164_from_digits(f"{country_digits}{digits}")
+
+    return ""
+
+
+def normalize_whatsapp_phone(
+    phone: str,
+    base_client: Any | None = None,
+    default_country_code: str | None = None,
+) -> str:
     raw = str(phone or "").strip()
     if not raw:
         return ""
 
+    if default_country_code:
+        country_code = normalize_default_country_code(default_country_code)
+        if not country_code:
+            frappe.throw(
+                "Default WhatsApp Country Code must be a valid country calling code like +966.",
+                frappe.ValidationError,
+            )
+    else:
+        country_code = get_default_whatsapp_country_code()
+
+    candidates: list[Any] = [raw]
     if base_client is not None:
         normalizer = getattr(base_client, "normalize_outbound_phone", None)
         if callable(normalizer):
             normalized = str(normalizer(raw) or "").strip()
-            digits = re.sub(r"\D", "", normalized)
-            return f"+{digits}" if digits else ""
+            if normalized:
+                candidates.append(normalized)
 
-    digits = re.sub(r"\D", "", raw)
-    if not digits:
-        return ""
+    for candidate in candidates:
+        normalized = _normalize_value_to_whatsapp_e164(candidate, country_code)
+        if normalized:
+            return normalized
 
-    if raw.startswith("+"):
-        return f"+{digits}"
-    if digits.startswith("00"):
-        return f"+{digits[2:]}"
-    if digits.startswith("05") and len(digits) == 10:
-        return f"+966{digits[1:]}"
-    if digits.startswith("5") and len(digits) == 9:
-        return f"+966{digits}"
-    return f"+{digits}"
+    return ""
+
+
+def validate_whatsapp_phone(
+    phone: str,
+    base_client: Any | None = None,
+    default_country_code: str | None = None,
+) -> str:
+    normalized = normalize_whatsapp_phone(
+        phone,
+        base_client=base_client,
+        default_country_code=default_country_code,
+    )
+    if not normalized:
+        frappe.throw(
+            "WhatsApp recipient phone must be a valid E.164 number. "
+            "Local numbers are normalized with the Default WhatsApp Country Code setting.",
+            frappe.ValidationError,
+        )
+    return normalized
 
 
 class MaqsamWhatsAppClient:
@@ -67,7 +175,7 @@ class MaqsamWhatsAppClient:
         variables: dict[str, Any] | list[Any] | str | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "RecipientPhone": self.normalize_whatsapp_phone(phone),
+            "RecipientPhone": validate_whatsapp_phone(phone, base_client=self.base_client),
             "TemplateId": template_id,
         }
         if variables not in (None, {}, []):
