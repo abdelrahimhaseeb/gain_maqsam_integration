@@ -9,6 +9,7 @@
   "default_agent_email",
   "column_break_defaults",
   "default_caller",
+  "default_whatsapp_country_code",
   "timeout_seconds",
   "incoming_section",
   "enable_incoming_call_popup",
@@ -52,6 +53,14 @@
    "fieldname": "default_caller",
    "fieldtype": "Data",
    "label": "Default Caller Number"
+  },
+  {
+   "default": "+966",
+   "description": "Used to normalize local WhatsApp recipient numbers before sending. Example: +966 converts 056xxxxxxx to +96656xxxxxxx.",
+   "fieldname": "default_whatsapp_country_code",
+   "fieldtype": "Data",
+   "label": "Default WhatsApp Country Code",
+   "reqd": 1
   },
   {
    "default": "30",

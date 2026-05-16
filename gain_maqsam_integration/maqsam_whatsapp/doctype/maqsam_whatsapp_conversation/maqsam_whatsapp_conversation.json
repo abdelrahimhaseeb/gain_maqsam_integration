@@ -1,0 +1,147 @@
+{
+ "actions": [],
+ "creation": "2026-05-09 00:00:00.000000",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-05-09 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Maqsam WhatsApp",
+ "owner": "Administrator",
+ "states": [],
+ "track_changes": 1,
+ "allow_import": 1,
+ "autoname": "field:conversation_id",
+ "field_order": [
+  "conversation_id",
+  "phone",
+  "status",
+  "reference_section",
+  "reference_doctype",
+  "reference_name",
+  "sent_by_user",
+  "last_message_at",
+  "last_message_preview",
+  "raw_payload"
+ ],
+ "fields": [
+  {
+   "fieldname": "conversation_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Conversation ID",
+   "reqd": 1,
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Phone",
+   "search_index": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Status"
+  },
+  {
+   "fieldname": "reference_section",
+   "fieldtype": "Section Break",
+   "label": "Reference"
+  },
+  {
+   "fieldname": "reference_doctype",
+   "fieldtype": "Link",
+   "label": "Reference DocType",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Reference Name",
+   "options": "reference_doctype",
+   "search_index": 1
+  },
+  {
+   "fieldname": "sent_by_user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sent By User",
+   "options": "User",
+   "search_index": 1
+  },
+  {
+   "fieldname": "last_message_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Last Message At"
+  },
+  {
+   "fieldname": "last_message_preview",
+   "fieldtype": "Small Text",
+   "label": "Last Message Preview"
+  },
+  {
+   "fieldname": "raw_payload",
+   "fieldtype": "Code",
+   "label": "Raw Payload",
+   "options": "JSON",
+   "permlevel": 1
+  }
+ ],
+ "name": "Maqsam WhatsApp Conversation",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "permlevel": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maqsam Supervisor",
+   "write": 1
+  },
+  {
+   "export": 1,
+   "permlevel": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maqsam Supervisor"
+  },
+  {
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Maqsam Agent"
+  }
+ ],
+ "search_fields": "conversation_id,phone,reference_name,sent_by_user",
+ "sort_field": "last_message_at",
+ "sort_order": "DESC"
+}

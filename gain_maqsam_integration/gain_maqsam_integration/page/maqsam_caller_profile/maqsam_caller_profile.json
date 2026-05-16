@@ -11,9 +11,9 @@
  "owner": "Administrator",
  "page_name": "maqsam-caller-profile",
  "roles": [
-  {
-   "role": "Desk User"
-  }
+  { "role": "System Manager" },
+  { "role": "Maqsam Supervisor" },
+  { "role": "Maqsam Agent" }
  ],
  "script": null,
  "standard": "Yes",

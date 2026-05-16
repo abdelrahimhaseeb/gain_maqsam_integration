@@ -28,18 +28,8 @@ CALL_LOG_FIELDS = [
 ]
 
 
-def get_recent_calls(phone: str, limit: int = 10) -> list[dict[str, Any]]:
-    lookup_numbers = [phone, digits_only(phone)]
-    suffix = phone_suffix(phone)
-    if not suffix:
-        return []
-
-    or_filters = [
-        ["caller_number", "like", f"%{suffix}%"],
-        ["callee_number", "like", f"%{suffix}%"],
-        ["normalized_phone", "like", f"%{suffix}%"],
-    ]
-    rows = frappe.get_all(
+def _query_recent_call_rows(or_filters: list[list[Any]], limit: int) -> list[Any]:
+    return frappe.get_all(
         "Maqsam Call Log",
         fields=CALL_LOG_FIELDS,
         or_filters=or_filters,
@@ -47,20 +37,67 @@ def get_recent_calls(phone: str, limit: int = 10) -> list[dict[str, Any]]:
         limit=limit * 3,
         ignore_permissions=True,
     )
+
+
+def _append_visible_recent_call(
+    calls: list[dict[str, Any]],
+    seen: set[str],
+    row: Any,
+    lookup_numbers: list[str],
+    limit: int,
+) -> None:
+    if len(calls) >= limit:
+        return
+
+    name = row.get("name")
+    if name in seen:
+        return
+    seen.add(name)
+
+    if not can_access_call_log(row, ptype="read"):
+        return
+    if not any(
+        phone_matches_any(row.get(field), lookup_numbers)
+        for field in ("caller_number", "callee_number", "normalized_phone")
+    ):
+        return
+
+    row = dict(row)
+    row["timestamp_display"] = format_datetime(row.get("timestamp")) if row.get("timestamp") else ""
+    calls.append(row)
+
+
+def get_recent_calls(phone: str, limit: int = 10) -> list[dict[str, Any]]:
+    lookup_numbers = [phone, digits_only(phone)]
+    suffix = phone_suffix(phone)
+    if not suffix:
+        return []
+
+    exact_numbers = [n for n in lookup_numbers if n]
     calls: list[dict[str, Any]] = []
-    for row in rows:
-        if not can_access_call_log(row, ptype="read"):
-            continue
-        if not any(
-            phone_matches_any(row.get(field), lookup_numbers)
-            for field in ("caller_number", "callee_number", "normalized_phone")
+    seen: set[str] = set()
+
+    if exact_numbers:
+        for row in _query_recent_call_rows(
+            or_filters=[
+                ["caller_number", "in", exact_numbers],
+                ["callee_number", "in", exact_numbers],
+                ["normalized_phone", "in", exact_numbers],
+            ],
+            limit=limit,
         ):
-            continue
-        row = dict(row)
-        row["timestamp_display"] = format_datetime(row.get("timestamp")) if row.get("timestamp") else ""
-        calls.append(row)
-        if len(calls) >= limit:
-            break
+            _append_visible_recent_call(calls, seen, row, lookup_numbers, limit)
+
+    if len(calls) < limit:
+        for row in _query_recent_call_rows(
+            or_filters=[
+                ["caller_number", "like", f"%{suffix}%"],
+                ["callee_number", "like", f"%{suffix}%"],
+                ["normalized_phone", "like", f"%{suffix}%"],
+            ],
+            limit=limit,
+        ):
+            _append_visible_recent_call(calls, seen, row, lookup_numbers, limit)
 
     return calls
 
