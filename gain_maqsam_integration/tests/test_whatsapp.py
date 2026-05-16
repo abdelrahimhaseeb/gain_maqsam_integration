@@ -258,6 +258,10 @@ class TestMaqsamWhatsAppBackend(unittest.TestCase):
         self.assertEqual(normalize_whatsapp_phone("0500000002"), "+971500000002")
         self.assertEqual(normalize_whatsapp_phone("500000002"), "+971500000002")
 
+    def test_reference_phone_match_rejects_short_suffix(self):
+        self.assertFalse(whatsapp_api._phones_match("+966500000123", "123"))
+        self.assertTrue(whatsapp_api._phones_match("+966500000123", "0500000123"))
+
     def test_client_never_sends_accidental_plus_zero_to_provider(self):
         base = RecordingBaseClient()
         client = MaqsamWhatsAppClient(base_client=base)
@@ -334,6 +338,38 @@ class TestMaqsamWhatsAppBackend(unittest.TestCase):
                 maqsam_whatsapp_list_templates(sync=1)
 
         self.assertEqual(fake.list_templates_calls, 0)
+
+    def test_sync_deactivates_local_templates_missing_from_maqsam(self):
+        stale_template = self._make_template("tpl-local-stale")
+        existing_remote_templates = [
+            {
+                "id": row.template_id,
+                "name": row.template_name or row.template_id,
+                "status": row.status,
+                "active": bool(row.active),
+                "body": row.content,
+            }
+            for row in frappe.get_all(
+                "Maqsam WhatsApp Template",
+                fields=["template_id", "template_name", "status", "active", "content"],
+                filters={"active": 1},
+            )
+            if row.template_id != stale_template
+        ]
+        fake = FakeWhatsAppClient(templates=existing_remote_templates)
+
+        frappe.set_user(self.supervisor)
+        with patch("gain_maqsam_integration.maqsam_whatsapp.api.get_client", return_value=fake):
+            result = maqsam_whatsapp_list_templates(sync=1)
+
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(result["deactivated"], 1)
+        self.assertEqual(frappe.db.get_value("Maqsam WhatsApp Template", stale_template, "active"), 0)
+        self.assertEqual(
+            frappe.db.get_value("Maqsam WhatsApp Template", stale_template, "status"),
+            "missing_from_maqsam",
+        )
+        self.assertNotIn(stale_template, {row["name"] for row in result["templates"]})
 
     def test_disabled_integration_blocks_all_whatsapp_apis_before_network(self):
         fake = FakeWhatsAppClient()
@@ -428,6 +464,7 @@ class TestMaqsamWhatsAppBackend(unittest.TestCase):
 
     def test_defaults_normalize_plus_zero_and_skip_invalid_candidates(self):
         fake = FakeWhatsAppClient()
+        suggested_template = self._make_template("tpl-suggested-default")
         lead_name = self._make_lead()
 
         frappe.set_user("Administrator")
@@ -441,6 +478,40 @@ class TestMaqsamWhatsAppBackend(unittest.TestCase):
         self.assertIn("+966500000008", result["phone_candidates"])
         self.assertNotIn("+0564348436", result["phone_candidates"])
         self.assertNotIn("+0123", result["phone_candidates"])
+        self.assertIn(suggested_template, result["suggested_templates"])
+
+    def test_patient_appointment_candidates_include_readable_patient_phone(self):
+        class FakeMeta:
+            def __init__(self, fields):
+                self.fields = set(fields)
+
+            def has_field(self, fieldname):
+                return fieldname in self.fields
+
+        appointment = frappe._dict({"patient": "PAT-WA-1"})
+        patient = frappe._dict({"mobile": "+966500000077"})
+
+        def fake_get_doc(doctype, name):
+            if doctype == "Patient Appointment" and name == "APP-WA-1":
+                return appointment
+            if doctype == "Patient" and name == "PAT-WA-1":
+                return patient
+            raise AssertionError(f"Unexpected document lookup: {doctype} {name}")
+
+        def fake_get_meta(doctype):
+            if doctype == "Patient Appointment":
+                return FakeMeta(["patient"])
+            if doctype == "Patient":
+                return FakeMeta(["mobile", "phone"])
+            raise AssertionError(f"Unexpected meta lookup: {doctype}")
+
+        with patch("gain_maqsam_integration.maqsam_whatsapp.api.frappe.get_doc", side_effect=fake_get_doc), patch(
+            "gain_maqsam_integration.maqsam_whatsapp.api.frappe.get_meta",
+            side_effect=fake_get_meta,
+        ), patch("gain_maqsam_integration.maqsam_whatsapp.api.can_read_document", return_value=True):
+            candidates = whatsapp_api._get_reference_phone_candidates("Patient Appointment", "APP-WA-1")
+
+        self.assertEqual(candidates, ["+966500000077"])
 
     def test_send_response_is_sanitized_but_raw_response_is_audited(self):
         fake = FakeWhatsAppClient(

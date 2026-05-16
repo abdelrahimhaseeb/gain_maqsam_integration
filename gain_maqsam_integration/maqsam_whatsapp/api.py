@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 import frappe
@@ -19,6 +18,7 @@ from gain_maqsam_integration.maqsam_whatsapp.client import (
     validate_whatsapp_phone,
 )
 from gain_maqsam_integration.maqsam_whatsapp.permissions import can_access_whatsapp_record
+from gain_maqsam_integration.profile.phone import phone_matches
 
 PHONE_FIELDS = (
     "mobile_no",
@@ -107,6 +107,11 @@ def _get_local_approved_active_templates() -> list[dict[str, Any]]:
     return [_template_projection(row) for row in rows if _is_approved_active_template(row)]
 
 
+def _get_suggested_templates(limit: int = 5) -> list[str]:
+    templates = _get_local_approved_active_templates()
+    return [row["name"] for row in templates[:limit] if row.get("name")]
+
+
 def _enforce_agent_reference_allowlist(reference_doctype: str) -> None:
     if is_maqsam_agent() and not is_maqsam_superuser() and reference_doctype not in AGENT_ALLOWED_REFERENCE_DOCTYPES:
         frappe.throw("Maqsam Agents can only send WhatsApp messages for Lead, Contact, Customer, Patient, or Patient Appointment records.", frappe.PermissionError)
@@ -147,6 +152,21 @@ def _extract_items(payload: Any, keys: tuple[str, ...]) -> list[dict[str, Any]]:
             if nested:
                 return nested
     return []
+
+
+def _has_items_container(payload: Any, keys: tuple[str, ...]) -> bool:
+    if isinstance(payload, list):
+        return True
+    if not isinstance(payload, dict):
+        return False
+    for key in keys:
+        if isinstance(payload.get(key), list):
+            return True
+    for key in ("message", "result", "data"):
+        value = payload.get(key)
+        if isinstance(value, (dict, list)) and _has_items_container(value, keys):
+            return True
+    return False
 
 
 def _first_value(payload: Any, *keys: str) -> Any:
@@ -236,27 +256,54 @@ def _upsert_template(template_payload: dict[str, Any]) -> str | None:
     return doc.name
 
 
-def _digits(value: str | None) -> str:
-    return re.sub(r"\D", "", cstr(value))
+def _deactivate_templates_missing_from_remote(remote_template_ids: set[str]) -> int:
+    rows = frappe.get_all(
+        "Maqsam WhatsApp Template",
+        fields=["name", "template_id", "active", "status"],
+        filters={"active": 1},
+    )
+    deactivated = 0
+    for row in rows:
+        template_id = cstr(row.get("template_id") or row.get("name")).strip()
+        if template_id in remote_template_ids:
+            continue
+        doc = frappe.get_doc("Maqsam WhatsApp Template", row.name)
+        doc.active = 0
+        doc.status = "missing_from_maqsam"
+        doc.save(ignore_permissions=True)
+        deactivated += 1
+    return deactivated
 
 
 def _phones_match(left: str, right: str) -> bool:
-    left_digits = _digits(left)
-    right_digits = _digits(right)
-    if not left_digits or not right_digits:
-        return False
-    return left_digits == right_digits or left_digits.endswith(right_digits) or right_digits.endswith(left_digits)
+    return phone_matches(left, right)
+
+
+def _append_unique_phone(candidates: list[str], seen: set[str], value: Any) -> None:
+    phone = cstr(value).strip()
+    if not phone:
+        return
+    key = "".join(ch for ch in phone if ch.isdigit()) or phone
+    if key in seen:
+        return
+    seen.add(key)
+    candidates.append(phone)
 
 
 def _get_reference_phone_candidates(reference_doctype: str, reference_name: str) -> list[str]:
     doc = frappe.get_doc(reference_doctype, reference_name)
     candidates: list[str] = []
+    seen: set[str] = set()
     meta = frappe.get_meta(reference_doctype)
     for fieldname in PHONE_FIELDS:
         if meta.has_field(fieldname):
             value = doc.get(fieldname)
-            if value:
-                candidates.append(cstr(value).strip())
+            _append_unique_phone(candidates, seen, value)
+
+    if reference_doctype == "Patient Appointment" and doc.get("patient") and can_read_document("Patient", doc.patient):
+        for patient_phone in _get_reference_phone_candidates("Patient", doc.patient):
+            _append_unique_phone(candidates, seen, patient_phone)
+
     return candidates
 
 
@@ -423,15 +470,21 @@ def _enforce_conversation_access(conversation_id: str) -> str | None:
 def maqsam_whatsapp_list_templates(sync: int | str = 0) -> dict[str, Any]:
     _ensure_whatsapp_enabled()
     synced = 0
+    deactivated = 0
     if cint(sync):
         if not is_maqsam_superuser():
             frappe.throw("Only Maqsam Supervisor or System Manager can sync WhatsApp templates from Maqsam.", frappe.PermissionError)
         payload = get_client().list_templates()
-        templates = _extract_items(payload, ("templates", "data", "items", "results"))
+        item_keys = ("templates", "data", "items", "results")
+        if not _has_items_container(payload, item_keys):
+            frappe.throw("Maqsam templates response did not include a templates list.", frappe.ValidationError)
+        templates = _extract_items(payload, item_keys)
+        remote_template_ids = {_template_external_id(item) for item in templates if _template_external_id(item)}
         synced = len([name for item in templates if (name := _upsert_template(item))])
+        deactivated = _deactivate_templates_missing_from_remote(remote_template_ids)
         frappe.db.commit()
 
-    return {"ok": True, "templates": _get_local_approved_active_templates(), "synced": synced}
+    return {"ok": True, "templates": _get_local_approved_active_templates(), "synced": synced, "deactivated": deactivated}
 
 
 @frappe.whitelist()
@@ -629,6 +682,6 @@ def maqsam_whatsapp_get_defaults(doctype: str, docname: str) -> dict[str, Any]:
 
     return {
         "phone_candidates": normalized_candidates,
-        "suggested_templates": [],
+        "suggested_templates": _get_suggested_templates(),
         "variable_defaults": clean_variables,
     }

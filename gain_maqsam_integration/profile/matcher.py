@@ -38,12 +38,12 @@ def _append_match(
     status: str | None = None,
     customer: str | None = None,
     source: str | None = None,
-) -> None:
+) -> bool:
     key = (doctype, name)
     if key in seen:
-        return
+        return False
     if not can_read_document(doctype, name):
-        return
+        return False
 
     seen.add(key)
     matches.append(
@@ -58,6 +58,42 @@ def _append_match(
             "priority": MATCH_PRIORITY.get(doctype, 99),
         }
     )
+    return True
+
+
+def _append_standard_matches(
+    records: list[Any],
+    available_fields: list[str],
+    lookup_numbers: list[str],
+    matches: list[dict[str, Any]],
+    seen: set[tuple[str, str]],
+    doctype: str,
+) -> int:
+    appended = 0
+    for record in records:
+        for field in available_fields:
+            value = record.get(field)
+            if phone_matches_any(value, lookup_numbers):
+                title = (
+                    record.get("patient_name")
+                    or record.get("customer_name")
+                    or record.get("lead_name")
+                    or record.get("first_name")
+                    or _safe_get_title(doctype, record.name)
+                )
+                if _append_match(
+                    matches,
+                    seen,
+                    doctype=doctype,
+                    name=record.name,
+                    title=title,
+                    matched_phone=value,
+                    status=record.get("status"),
+                    customer=record.get("customer"),
+                ):
+                    appended += 1
+                break
+    return appended
 
 
 def _match_standard_doctype(
@@ -84,9 +120,7 @@ def _match_standard_doctype(
         if meta.has_field(field)
     ]
 
-    # Pass 1 – exact IN match (benefits from existing column indexes).
     exact_numbers = [n for n in lookup_numbers if n]
-    records: list[Any] = []
     if exact_numbers:
         records = frappe.get_all(
             doctype,
@@ -95,9 +129,11 @@ def _match_standard_doctype(
             limit=50,
             ignore_permissions=True,
         )
+        appended = _append_standard_matches(records, available_fields, lookup_numbers, matches, seen, doctype)
+    else:
+        appended = 0
 
-    # Pass 2 – suffix LIKE fallback only when exact pass found nothing.
-    if not records:
+    if not appended:
         records = frappe.get_all(
             doctype,
             fields=["name", *available_fields, *extra_fields],
@@ -105,29 +141,7 @@ def _match_standard_doctype(
             limit=50,
             ignore_permissions=True,
         )
-
-    for record in records:
-        for field in available_fields:
-            value = record.get(field)
-            if phone_matches_any(value, lookup_numbers):
-                title = (
-                    record.get("patient_name")
-                    or record.get("customer_name")
-                    or record.get("lead_name")
-                    or record.get("first_name")
-                    or _safe_get_title(doctype, record.name)
-                )
-                _append_match(
-                    matches,
-                    seen,
-                    doctype=doctype,
-                    name=record.name,
-                    title=title,
-                    matched_phone=value,
-                    status=record.get("status"),
-                    customer=record.get("customer"),
-                )
-                break
+        _append_standard_matches(records, available_fields, lookup_numbers, matches, seen, doctype)
 
 
 def _match_contact_child_numbers(
@@ -142,9 +156,7 @@ def _match_contact_child_numbers(
     if not suffix:
         return
 
-    # Pass 1 – exact IN match.
     exact_numbers = [n for n in lookup_numbers if n]
-    rows: list[Any] = []
     if exact_numbers:
         rows = frappe.get_all(
             "Contact Phone",
@@ -153,9 +165,21 @@ def _match_contact_child_numbers(
             limit=50,
             ignore_permissions=True,
         )
+        appended = 0
+        for row in rows:
+            if phone_matches_any(row.phone, lookup_numbers) and _append_match(
+                matches,
+                seen,
+                doctype="Contact",
+                name=row.parent,
+                matched_phone=row.phone,
+                source="Contact Numbers",
+            ):
+                appended += 1
+    else:
+        appended = 0
 
-    # Pass 2 – suffix LIKE fallback.
-    if not rows:
+    if not appended:
         rows = frappe.get_all(
             "Contact Phone",
             fields=["parent", "phone"],
@@ -164,16 +188,16 @@ def _match_contact_child_numbers(
             ignore_permissions=True,
         )
 
-    for row in rows:
-        if phone_matches_any(row.phone, lookup_numbers):
-            _append_match(
-                matches,
-                seen,
-                doctype="Contact",
-                name=row.parent,
-                matched_phone=row.phone,
-                source="Contact Numbers",
-            )
+        for row in rows:
+            if phone_matches_any(row.phone, lookup_numbers):
+                _append_match(
+                    matches,
+                    seen,
+                    doctype="Contact",
+                    name=row.parent,
+                    matched_phone=row.phone,
+                    source="Contact Numbers",
+                )
 
 
 def _append_customers_from_contacts(matches: list[dict[str, Any]], seen: set[tuple[str, str]]) -> None:
